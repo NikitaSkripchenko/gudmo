@@ -74,7 +74,7 @@ export async function readAccountRateLimits(config, options = {}) {
       id: INITIALIZE_ID,
       method: "initialize",
       params: {
-        clientInfo: { name: "gudmo", version: "0.4.1" },
+        clientInfo: { name: "gudmo", version: "0.4.2" },
         capabilities: { experimentalApi: true },
       },
     });

@@ -24,6 +24,7 @@ export async function runSchedulerCycle({
   for (const discoveredAccount of discovered) {
     const account = await accountPreparer(discoveredAccount);
     let state = await loadState(account.paths.state);
+    let verifiedRateLimits = null;
     const plannedMs = state.nextWakeAt ? Date.parse(state.nextWakeAt) : null;
 
     if (Number.isFinite(plannedMs) && plannedMs <= clock()) {
@@ -33,12 +34,15 @@ export async function runSchedulerCycle({
         clock,
         runner,
         runnerOptions: { env: account.codexEnv, account },
+        verifier: reader,
+        verifierOptions: { env: account.codexEnv, account },
       });
       if (result.status === "locked") {
         earliestMs = Math.min(earliestMs, clock() + LOCK_RETRY_MS);
         continue;
       }
       dueAccounts += 1;
+      verifiedRateLimits = result.rateLimits || null;
       state = await loadState(account.paths.state);
     }
 
@@ -48,6 +52,7 @@ export async function runSchedulerCycle({
         paths: account.paths,
         reader,
         readerOptions: { env: account.codexEnv, account },
+        rateLimits: verifiedRateLimits,
         clock,
       });
       if (plan.status === "locked") {

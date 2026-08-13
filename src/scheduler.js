@@ -60,6 +60,8 @@ export async function executeTick({
   clock = Date.now,
   runner = runCodex,
   runnerOptions,
+  verifier = null,
+  verifierOptions,
 } = {}) {
   const release = await acquireLock(paths.lock);
   if (!release) return { status: "locked", windows: [] };
@@ -67,6 +69,7 @@ export async function executeTick({
   try {
     const config = await loadConfig(paths.config);
     const state = await loadState(paths.state);
+    const beforeRateLimits = state.rateLimits?.windows || [];
     const nowMs = clock();
     const windows = forceWindows || dueWindows(state, config, nowMs);
 
@@ -110,10 +113,92 @@ export async function executeTick({
     state.nextWakeReason = null;
     state.totalSuccesses += 1;
     await writeJsonAtomic(paths.state, state);
-    await appendLog(paths.log, { at: completedAt, event: "success", windows });
 
-    return { status: "sent", windows, at: completedAt };
+    let verification;
+    let observedRateLimits = null;
+    if (verifier) {
+      try {
+        observedRateLimits = await verifier(config, verifierOptions);
+        state.rateLimits = {
+          lastCheckedAt: observedRateLimits.fetchedAt,
+          error: null,
+          windows: observedRateLimits.windows,
+        };
+        verification = buildWindowVerification({
+          windowNames: windows,
+          beforeWindows: beforeRateLimits,
+          afterWindows: observedRateLimits.windows,
+          checkedAt: observedRateLimits.fetchedAt,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const checkedAt = new Date(clock()).toISOString();
+        state.rateLimits = {
+          lastCheckedAt: checkedAt,
+          error: message,
+          windows: beforeRateLimits,
+        };
+        verification = buildWindowVerification({
+          windowNames: windows,
+          beforeWindows: beforeRateLimits,
+          afterWindows: [],
+          checkedAt,
+          error: message,
+        });
+      }
+      await writeJsonAtomic(paths.state, state);
+    } else {
+      verification = buildWindowVerification({
+        windowNames: windows,
+        beforeWindows: beforeRateLimits,
+        afterWindows: [],
+        checkedAt: null,
+        error: "post-send verification was not requested",
+      });
+    }
+
+    await appendLog(paths.log, {
+      at: completedAt,
+      event: "success",
+      windows,
+      requestSucceeded: true,
+      verification,
+    });
+
+    return { status: "sent", windows, at: completedAt, verification, rateLimits: observedRateLimits };
   } finally {
     await release();
   }
+}
+
+export function buildWindowVerification({
+  windowNames,
+  beforeWindows = [],
+  afterWindows = [],
+  checkedAt = null,
+  error = null,
+}) {
+  const windows = {};
+  for (const name of windowNames) {
+    const expectedMinutes = WINDOW_DEFINITIONS[name].durationMs / 60_000;
+    const beforeResetsAt = findReset(beforeWindows, expectedMinutes);
+    const afterResetsAt = findReset(afterWindows, expectedMinutes);
+    const beforeMs = beforeResetsAt ? Date.parse(beforeResetsAt) : NaN;
+    const afterMs = afterResetsAt ? Date.parse(afterResetsAt) : NaN;
+    const comparable = Number.isFinite(beforeMs) && Number.isFinite(afterMs);
+    const advanced = comparable && afterMs > beforeMs;
+    windows[name] = {
+      status: comparable ? (advanced ? "advanced" : "unchanged") : "unavailable",
+      updated: comparable ? advanced : null,
+      beforeResetsAt,
+      afterResetsAt,
+      changeSeconds: comparable ? Math.round((afterMs - beforeMs) / 1_000) : null,
+    };
+  }
+  return { checkedAt, error, windows };
+}
+
+function findReset(windows, durationMinutes) {
+  const matching = windows.find((window) => window.durationMinutes === durationMinutes);
+  return matching && Number.isFinite(Date.parse(matching.resetsAt)) ? matching.resetsAt : null;
 }

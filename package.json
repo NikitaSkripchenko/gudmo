@@ -1,6 +1,6 @@
 {
   "name": "gudmo",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Best-effort scheduler for tiny Codex keepalive prompts.",
   "type": "module",
   "bin": {

@@ -65,6 +65,10 @@ Runtime state and rotating activity logs are stored in:
 ~/.local/state/gudmo/
 ```
 
+After each successful prompt, Gudmo reads reset metadata again and compares it with the pre-send snapshot. Each new success entry contains `requestSucceeded: true` plus a `verification.windows` object. A window status is `advanced` when its observed reset moved later, `unchanged` when both timestamps exist but did not move later, or `unavailable` when either matching snapshot is absent. Each result includes `updated`, `beforeResetsAt`, `afterResetsAt`, and `changeSeconds`.
+
+This comparison is observational evidence from the experimental Codex app-server metadata, not a guarantee of subscription behavior. For example, if the app-server exposes only its 10,080-minute window, Gudmo can verify `7d` while correctly reporting `5h` as unavailable.
+
 ## Development
 
 The test suite uses fake Codex executables and does not contact a model:

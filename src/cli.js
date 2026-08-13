@@ -11,6 +11,7 @@ import {
   uninstallLaunchAgent,
 } from "./launchd.js";
 import { getPaths } from "./paths.js";
+import { readAccountRateLimits } from "./rate-limits.js";
 import { dueWindows, executeTick, loadState } from "./scheduler.js";
 
 const HELP = `gudmo - schedule tiny Codex prompts for usage-window anchoring
@@ -42,7 +43,7 @@ export async function main(argv, { env = process.env, out = console.log, err = c
     return 0;
   }
   if (command === "--version" || command === "version") {
-    out("gudmo 0.4.1");
+    out("gudmo 0.4.2");
     return 0;
   }
   if (command === "init") {
@@ -76,6 +77,8 @@ export async function main(argv, { env = process.env, out = console.log, err = c
     return runForAccounts(accounts, (account) => executeTick({
       paths: account.paths,
       runnerOptions: { env: account.codexEnv, account },
+      verifier: readAccountRateLimits,
+      verifierOptions: { env: account.codexEnv, account },
     }), out, err, quiet);
   }
 
@@ -109,6 +112,8 @@ export async function main(argv, { env = process.env, out = console.log, err = c
       paths: account.paths,
       forceWindows: windows,
       runnerOptions: { env: account.codexEnv, account },
+      verifier: readAccountRateLimits,
+      verifierOptions: { env: account.codexEnv, account },
     }), out, err);
   }
 

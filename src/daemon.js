@@ -46,16 +46,19 @@ export async function planNextSend({
   paths,
   reader = readAccountRateLimits,
   readerOptions,
+  rateLimits: suppliedRateLimits = null,
   clock = Date.now,
 } = {}) {
   const config = await loadConfig(paths.config);
-  let rateLimits;
+  let rateLimits = suppliedRateLimits;
   let rateLimitError = null;
-  try {
-    rateLimits = await reader(config, readerOptions);
-  } catch (error) {
-    rateLimitError = error instanceof Error ? error.message : String(error);
-    rateLimits = { fetchedAt: new Date(clock()).toISOString(), windows: [] };
+  if (rateLimits === null) {
+    try {
+      rateLimits = await reader(config, readerOptions);
+    } catch (error) {
+      rateLimitError = error instanceof Error ? error.message : String(error);
+      rateLimits = { fetchedAt: new Date(clock()).toISOString(), windows: [] };
+    }
   }
 
   const release = await acquireLock(paths.lock);
@@ -122,6 +125,8 @@ export async function runDaemon({
       clock,
       runner,
       runnerOptions,
+      verifier: reader,
+      verifierOptions: readerOptions,
     });
     if (result.status === "sent") {
       sends += 1;
@@ -203,6 +208,8 @@ export async function runAccountsDaemon({
         clock,
         runner,
         runnerOptions: { env: account.codexEnv, account },
+        verifier: reader,
+        verifierOptions: { env: account.codexEnv, account },
       });
       if (result.status === "sent") {
         sends += 1;

@@ -5,7 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { ensureConfig } from "../src/config.js";
 import { getPaths } from "../src/paths.js";
-import { executeTick, loadState } from "../src/scheduler.js";
+import { buildWindowVerification, executeTick, loadState } from "../src/scheduler.js";
+import { writeJsonAtomic } from "../src/storage.js";
 
 const HOUR = 60 * 60 * 1_000;
 const DAY = 24 * HOUR;
@@ -122,6 +123,83 @@ test("concurrent ticks cannot double-send", async (t) => {
 
   assert.equal(second.status, "locked");
   assert.equal((await first).status, "sent");
+});
+
+test("window verification distinguishes advanced, unchanged, and unavailable resets", () => {
+  const verification = buildWindowVerification({
+    windowNames: ["5h", "7d"],
+    beforeWindows: [
+      { durationMinutes: 300, resetsAt: "2026-08-11T05:00:00.000Z" },
+      { durationMinutes: 10_080, resetsAt: "2026-08-18T00:00:00.000Z" },
+    ],
+    afterWindows: [
+      { durationMinutes: 300, resetsAt: "2026-08-11T05:00:00.000Z" },
+      { durationMinutes: 10_080, resetsAt: "2026-08-19T00:00:00.000Z" },
+    ],
+    checkedAt: "2026-08-11T00:00:10.000Z",
+  });
+
+  assert.deepEqual(verification.windows["5h"], {
+    status: "unchanged",
+    updated: false,
+    beforeResetsAt: "2026-08-11T05:00:00.000Z",
+    afterResetsAt: "2026-08-11T05:00:00.000Z",
+    changeSeconds: 0,
+  });
+  assert.equal(verification.windows["7d"].status, "advanced");
+  assert.equal(verification.windows["7d"].updated, true);
+  assert.equal(verification.windows["7d"].changeSeconds, 86_400);
+
+  const unavailable = buildWindowVerification({
+    windowNames: ["5h"],
+    beforeWindows: [],
+    afterWindows: [],
+  });
+  assert.equal(unavailable.windows["5h"].status, "unavailable");
+  assert.equal(unavailable.windows["5h"].updated, null);
+});
+
+test("successful ticks log observed before and after reset movement", async (t) => {
+  const paths = await setup(t);
+  const state = await loadState(paths.state);
+  state.rateLimits = {
+    lastCheckedAt: "2026-08-10T00:00:00.000Z",
+    error: null,
+    windows: [{ durationMinutes: 10_080, resetsAt: "2026-08-18T00:00:00.000Z" }],
+  };
+  await writeJsonAtomic(paths.state, state);
+
+  const result = await executeTick({
+    paths,
+    clock: () => START,
+    runner: async () => ({ ok: true }),
+    verifier: async () => ({
+      fetchedAt: "2026-08-11T00:00:10.000Z",
+      windows: [{ durationMinutes: 10_080, resetsAt: "2026-08-19T00:00:00.000Z" }],
+    }),
+  });
+  const [entry] = (await fs.readFile(paths.log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+
+  assert.equal(result.verification.windows["5h"].status, "unavailable");
+  assert.equal(result.verification.windows["7d"].status, "advanced");
+  assert.equal(entry.requestSucceeded, true);
+  assert.equal(entry.verification.windows["7d"].updated, true);
+  assert.equal((await loadState(paths.state)).rateLimits.lastCheckedAt, "2026-08-11T00:00:10.000Z");
+});
+
+test("a verification read failure does not turn a successful prompt into a failure", async (t) => {
+  const paths = await setup(t);
+  const result = await executeTick({
+    paths,
+    clock: () => START,
+    runner: async () => ({ ok: true }),
+    verifier: async () => { throw new Error("metadata offline"); },
+  });
+  const [entry] = (await fs.readFile(paths.log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+
+  assert.equal(result.status, "sent");
+  assert.equal(entry.verification.error, "metadata offline");
+  assert.equal(entry.verification.windows["7d"].status, "unavailable");
 });
 
 async function setup(t) {

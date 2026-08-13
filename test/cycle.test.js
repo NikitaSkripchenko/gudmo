@@ -50,13 +50,17 @@ test("a due cycle sends once, replans, and leaves no resident Node work", async 
   state.nextWakeAt = new Date(START).toISOString();
   await writeJsonAtomic(account.paths.state, state);
   let sends = 0;
+  let reads = 0;
 
   const result = await runSchedulerCycle({
     paths,
     clock: () => START,
     accountLoader: async () => [account],
     accountPreparer: async (value) => value,
-    reader: async () => ({ fetchedAt: new Date(START).toISOString(), windows: [] }),
+    reader: async () => {
+      reads += 1;
+      return { fetchedAt: new Date(START).toISOString(), windows: [] };
+    },
     runner: async () => {
       sends += 1;
       return { ok: true };
@@ -64,6 +68,7 @@ test("a due cycle sends once, replans, and leaves no resident Node work", async 
   });
 
   assert.equal(sends, 1);
+  assert.equal(reads, 1);
   assert.equal(result.dueAccounts, 1);
   assert.equal(result.delaySeconds, 5 * 60 * 60);
 });
