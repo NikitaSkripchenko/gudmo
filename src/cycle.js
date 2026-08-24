@@ -15,6 +15,8 @@ export async function runSchedulerCycle({
   reader = readAccountRateLimits,
   runner = runCodex,
   clock = Date.now,
+  verificationDelayMs,
+  verificationWaiter,
 } = {}) {
   const config = await loadConfig(paths.config);
   const discovered = await accountLoader({ paths, env });
@@ -36,6 +38,8 @@ export async function runSchedulerCycle({
         runnerOptions: { env: account.codexEnv, account },
         verifier: reader,
         verifierOptions: { env: account.codexEnv, account },
+        verificationDelayMs,
+        verificationWaiter,
       });
       if (result.status === "locked") {
         earliestMs = Math.min(earliestMs, clock() + LOCK_RETRY_MS);

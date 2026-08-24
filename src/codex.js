@@ -14,6 +14,7 @@ export function buildCodexArgs(config, workingDirectory = os.tmpdir(), options =
     "read-only",
     "--color",
     "never",
+    "--json",
     "-C",
     workingDirectory,
     "-c",
@@ -65,19 +66,72 @@ export async function runCodex(config, options = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      let telemetry = null;
+      let telemetryError = null;
+      if (code === 0) {
+        try {
+          telemetry = parseCodexEvents(stdout);
+        } catch (error) {
+          telemetryError = error instanceof Error ? error.message : String(error);
+        }
+      }
       resolve({
-        ok: code === 0,
+        ok: code === 0 && telemetryError === null,
         code,
         signal,
         error: code === 0
-          ? null
+          ? telemetryError
           : (timedOut ? `Codex timed out after ${config.timeoutSeconds} seconds` : summarizeFailure(stderr, code, signal)),
         stdout,
         stderr,
         startedAt,
+        ...(telemetry || {}),
       });
     });
   });
+}
+
+export function parseCodexEvents(output) {
+  let reply = null;
+  let usage = null;
+  for (const line of output.split("\n").filter((value) => value.trim())) {
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const eventName = String(event.type || event.method || "")
+      .replaceAll("/", ".")
+      .replaceAll("_", ".");
+    const payload = event.params || event;
+    const item = payload.item || event.item;
+    if (eventName === "item.completed"
+      && item?.type === "agent_message"
+      && typeof item.text === "string") {
+      reply = item.text;
+    }
+    if (eventName === "turn.completed") {
+      const eventUsage = payload.usage || payload.turn?.usage || event.usage;
+      const inputTokens = eventUsage?.input_tokens ?? eventUsage?.inputTokens;
+      const cachedInputTokens = eventUsage?.cached_input_tokens ?? eventUsage?.cachedInputTokens;
+      const outputTokens = eventUsage?.output_tokens ?? eventUsage?.outputTokens;
+      if ([inputTokens, cachedInputTokens, outputTokens].every(isTokenCount)) {
+        usage = {
+          inputTokens,
+          cachedInputTokens,
+          outputTokens,
+          totalTokens: inputTokens + outputTokens,
+        };
+      }
+    }
+  }
+  if (!usage) throw new Error("Codex JSON output did not include valid token usage");
+  return { reply, minimalReply: reply === "OK", usage };
+}
+
+function isTokenCount(value) {
+  return Number.isInteger(value) && value >= 0;
 }
 
 function appendBounded(current, chunk) {

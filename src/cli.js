@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import { discoverAccounts, prepareAccount } from "./accounts.js";
 import { ensureConfig, loadConfig } from "./config.js";
-import { WINDOW_DEFINITIONS } from "./constants.js";
+import { VERSION, WINDOW_DEFINITIONS } from "./constants.js";
 import { runSchedulerCycle } from "./cycle.js";
 import { planNextSend, runAccountsDaemon } from "./daemon.js";
 import { runDoctor } from "./doctor.js";
@@ -12,13 +12,16 @@ import {
 } from "./launchd.js";
 import { getPaths } from "./paths.js";
 import { readAccountRateLimits } from "./rate-limits.js";
-import { dueWindows, executeTick, loadState } from "./scheduler.js";
+import { dueWindows, executeTick, executeTickUntilVerified, loadState } from "./scheduler.js";
+import { formatTokenEval, readCodexVersion, runTokenEval } from "./eval.js";
+import { writeJsonAtomic } from "./storage.js";
 
 const HELP = `gudmo - schedule tiny Codex prompts for usage-window anchoring
 
 Usage:
   gudmo init                 Create the default configuration
   gudmo doctor               Check platform, Codex CLI, and ChatGPT login
+  gudmo eval [--runs N]      Measure the repeatable 24-hour token footprint
   gudmo run [--window NAME]  Send now; NAME is all, 5h, or 7d
   gudmo tick                 Send only when a configured window is due
   gudmo daemon               Run the reset-aware persistent scheduler
@@ -28,7 +31,7 @@ Usage:
   gudmo logs [--lines N]     Show recent structured activity
   gudmo help                 Show this help
 
-The default prompt is "gudmo". codex-auth registries are detected automatically;
+The default prompt requests exactly "OK". codex-auth registries are detected automatically;
 every account runs in an isolated CODEX_HOME without switching the active account.
 Installing starts a caffeinated scheduler unless --no-start is passed.
 `;
@@ -43,7 +46,7 @@ export async function main(argv, { env = process.env, out = console.log, err = c
     return 0;
   }
   if (command === "--version" || command === "version") {
-    out("gudmo 0.4.2");
+    out(`gudmo ${VERSION}`);
     return 0;
   }
   if (command === "init") {
@@ -68,6 +71,26 @@ export async function main(argv, { env = process.env, out = console.log, err = c
     const result = await runDoctor(await loadConfig(paths.config), { accounts });
     for (const check of result.checks) out(`${check.ok ? "PASS" : "FAIL"} ${check.name}: ${check.detail}`);
     return result.ok ? 0 : 1;
+  }
+
+  if (command === "eval") {
+    const json = args.includes("--json");
+    const requestedRuns = readOption(args, "--runs") || "20";
+    rejectUnknown(removeOption(args.filter((arg) => arg !== "--json"), "--runs"), []);
+    const runs = Number.parseInt(requestedRuns, 10);
+    if (!Number.isInteger(runs) || String(runs) !== requestedRuns || runs < 1 || runs > 100) {
+      throw new Error("--runs must be an integer from 1 to 100");
+    }
+    const config = await loadConfig(paths.config);
+    const report = await runTokenEval({
+      config,
+      runs,
+      codexVersion: await readCodexVersion(config, { env }),
+      runnerOptions: { env },
+    });
+    await writeJsonAtomic(paths.evalReport, report);
+    out(json ? JSON.stringify(report, null, 2) : formatTokenEval(report));
+    return report.result === "PASS" ? 0 : 1;
   }
 
   if (command === "tick") {
@@ -108,12 +131,13 @@ export async function main(argv, { env = process.env, out = console.log, err = c
       throw new Error("--window must be all, 5h, or 7d");
     }
     const accounts = await prepareAccounts(await discoverAccounts({ paths, env }));
-    return runForAccounts(accounts, (account) => executeTick({
+    return runForAccountsParallel(accounts, (account) => executeTickUntilVerified({
       paths: account.paths,
       forceWindows: windows,
       runnerOptions: { env: account.codexEnv, account },
       verifier: readAccountRateLimits,
       verifierOptions: { env: account.codexEnv, account },
+      onProgress: (event) => printRunProgress(event, account.label, out),
     }), out, err);
   }
 
@@ -217,6 +241,11 @@ export function buildStatus({ config, accountStates, scheduler, paths, nowMs = D
       nextWakeAt: state.nextWakeAt ?? null,
       nextWakeReason: state.nextWakeReason ?? null,
       rateLimits: state.rateLimits ?? { lastCheckedAt: null, error: null, windows: [] },
+      tokenUsage24h: summarizeTokenUsage(
+        state.requestHistory ?? [],
+        config.maxRequestsPer24Hours,
+        nowMs,
+      ),
       totalAttempts: state.totalAttempts,
       totalSuccesses: state.totalSuccesses,
     })),
@@ -240,15 +269,82 @@ async function runForAccounts(accounts, operation, out, err, quiet = false) {
   return exitCode;
 }
 
+export async function runForAccountsParallel(accounts, operation, out, err, quiet = false) {
+  const results = await Promise.all(accounts.map(async (account) => {
+    try {
+      return { account, result: await operation(account), error: null };
+    } catch (error) {
+      return {
+        account,
+        result: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }));
+
+  let exitCode = 0;
+  for (const item of results) {
+    if (item.error) {
+      err(`${item.account.label}: run failed: ${item.error}`);
+      exitCode = 1;
+      continue;
+    }
+    const code = printTickResult(item.result, out, err, quiet, item.account.label);
+    if (code !== 0) exitCode = code;
+  }
+  return exitCode;
+}
+
+export function printRunProgress(event, account, write) {
+  const prefix = `${account}: `;
+  if (event.phase === "lock-wait") {
+    write(`${prefix}waiting for an existing tick (up to ${formatDuration(event.maxWaitMs)})...`);
+  } else if (event.phase === "checking") {
+    write(`${prefix}checking current window state...`);
+  } else if (event.phase === "checking-previous") {
+    write(`${prefix}checking the previous prompt's window result...`);
+  } else if (event.phase === "sending") {
+    write(`${prefix}sending prompt (attempt ${event.attempt}/${event.maxAttempts})...`);
+  } else if (event.phase === "verifying") {
+    write(`${prefix}prompt completed; verifying timer for ${formatDuration(event.delayMs)}...`);
+  } else if (event.phase === "retrying") {
+    write(`${prefix}timer still floating; retrying in ${formatDuration(event.delayMs)} (attempt ${event.nextAttempt}/${event.maxAttempts})...`);
+  } else if (event.phase === "metadata-retry") {
+    write(`${prefix}window metadata unavailable; checking again in ${formatDuration(event.delayMs)}...`);
+  }
+}
+
 function printTickResult(result, out, err, quiet = false, account = null) {
   const names = result.windows.join(" + ");
   const prefix = account ? `${account}: ` : "";
-  if (!quiet && result.status === "sent") out(`${prefix}sent prompt for ${names} at ${result.at}`);
+  const elapsed = Number.isFinite(result.elapsedMs) ? ` (${formatDuration(result.elapsedMs)})` : "";
+  if (!quiet && result.status === "sent") out(`${prefix}sent prompt for ${names} at ${result.at}${elapsed}`);
+  else if (!quiet && result.status === "satisfied") {
+    out(`${prefix}requested windows were completed by the existing gudmo tick${elapsed}`);
+  } else if (result.status === "partial") {
+    const anchored = [...result.sentWindows, ...result.reusedWindows].join(" + ") || "none";
+    err(`${prefix}anchored ${anchored}; ${result.unverifiedWindows.join(" + ")} remains unverified${elapsed}`);
+  }
   else if (!quiet && result.status === "not-due") out(`${prefix}nothing due.`);
   else if (!quiet && result.status === "retry-wait") out(`${prefix}waiting to retry ${names} at ${result.retryAt}`);
-  else if (!quiet && result.status === "locked") out(`${prefix}another gudmo tick is already running.`);
-  else if (result.status === "failed") err(`${prefix}send failed for ${names}: ${result.error}`);
-  return result.status === "failed" ? 1 : 0;
+  else if (!quiet && result.status === "daily-limit") out(`${prefix}24-hour request ceiling reached; ${names} resumes at ${result.retryAt}${elapsed}`);
+  else if (!quiet && result.status === "locked") out(`${prefix}another gudmo tick is already running${elapsed}.`);
+  else if (result.status === "verification-pending") {
+    err(`${prefix}prompt sent for ${names}; window verification will retry at ${result.retryAt}`);
+  } else if (result.status === "unverified") {
+    err(`${prefix}${names} verification remains unavailable; no new prompt was sent for that pending check${elapsed}`);
+  } else if (result.status === "failed" && result.verification) {
+    err(`${prefix}window update failed for ${names}: ${result.error}${elapsed}`);
+  } else if (result.status === "failed") err(`${prefix}send failed for ${names}: ${result.error}${elapsed}`);
+  return ["failed", "partial", "verification-pending", "unverified", "daily-limit", "locked"].includes(result.status)
+    ? 1
+    : 0;
+}
+
+function formatDuration(milliseconds) {
+  const seconds = Math.max(0, Math.round(milliseconds / 1_000));
+  if (seconds >= 60 && seconds % 60 === 0) return `${seconds / 60}m`;
+  return `${seconds}s`;
 }
 
 function printStatus(status, out) {
@@ -270,8 +366,33 @@ function printStatus(status, out) {
       out(`  Server ${window.limitId}/${duration}: ${window.resetsAt} (${window.usedPercent ?? "?"}% used)`);
     }
     if (account.rateLimits.error) out(`  Server limit read error: ${account.rateLimits.error}`);
+    const usage = account.tokenUsage24h;
+    out(`  24h requests: ${usage.requests}/${usage.requestCeiling}`);
+    out(`  24h measured tokens: ${usage.totalTokens} (${usage.measurableRequests}/${usage.requests} requests measured)`);
     if (account.lastError) out(`  Last error: ${account.lastError}`);
   }
+}
+
+function summarizeTokenUsage(requestHistory, requestCeiling, nowMs) {
+  const cutoffMs = nowMs - 24 * 60 * 60 * 1_000;
+  const requests = requestHistory.filter((request) => {
+    const atMs = Date.parse(request.at);
+    return Number.isFinite(atMs) && atMs > cutoffMs && atMs <= nowMs;
+  });
+  const measurable = requests.filter((request) => Number.isFinite(request.usage?.totalTokens));
+  return {
+    requests: requests.length,
+    measurableRequests: measurable.length,
+    inputTokens: sumUsage(measurable, "inputTokens"),
+    cachedInputTokens: sumUsage(measurable, "cachedInputTokens"),
+    outputTokens: sumUsage(measurable, "outputTokens"),
+    totalTokens: sumUsage(measurable, "totalTokens"),
+    requestCeiling,
+  };
+}
+
+function sumUsage(requests, field) {
+  return requests.reduce((total, request) => total + (request.usage[field] || 0), 0);
 }
 
 function readOption(args, name) {

@@ -5,7 +5,11 @@ const ALLOWED_REASONING = new Set(["none", "minimal", "low", "medium", "high", "
 
 export async function ensureConfig(configPath) {
   const existing = await readJson(configPath, null);
-  if (existing === null) await writeJsonAtomic(configPath, DEFAULT_CONFIG);
+  if (existing === null) {
+    await writeJsonAtomic(configPath, DEFAULT_CONFIG);
+  } else if (existing.message === "gudmo") {
+    await writeJsonAtomic(configPath, { ...existing, message: DEFAULT_CONFIG.message });
+  }
   return loadConfig(configPath);
 }
 
@@ -17,6 +21,11 @@ export async function loadConfig(configPath) {
     throw new Error("config.message must be a non-empty string of at most 100 characters");
   }
   validateSeconds("maxIntervalSeconds", config.maxIntervalSeconds, 60, 5 * 60 * 60);
+  if (!Number.isInteger(config.maxRequestsPer24Hours)
+    || config.maxRequestsPer24Hours < 1
+    || config.maxRequestsPer24Hours > 100) {
+    throw new Error("config.maxRequestsPer24Hours must be an integer from 1 to 100");
+  }
   validateSeconds("resetGraceSeconds", config.resetGraceSeconds, 0, 60);
   validateSeconds("retrySeconds", config.retrySeconds, 5, 86_400);
   validateSeconds("timeoutSeconds", config.timeoutSeconds, 10, 600);

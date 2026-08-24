@@ -1,4 +1,5 @@
 export const APP_NAME = "gudmo";
+export const VERSION = "0.4.2";
 export const STATE_VERSION = 1;
 export const LAUNCHD_LABEL = "dev.gudmo.renew";
 
@@ -8,8 +9,9 @@ export const WINDOW_DEFINITIONS = Object.freeze({
 });
 
 export const DEFAULT_CONFIG = Object.freeze({
-  message: "gudmo",
+  message: "Reply only: OK",
   maxIntervalSeconds: 5 * 60 * 60,
+  maxRequestsPer24Hours: 5,
   resetGraceSeconds: 1,
   retrySeconds: 60,
   timeoutSeconds: 120,

@@ -13,6 +13,7 @@ export function getPaths(env = process.env) {
       lock: path.join(override, "run.lock"),
       log: path.join(override, "gudmo.log"),
       schedulerLog: path.join(override, "scheduler.log"),
+      evalReport: path.join(override, "eval-latest.json"),
       launchAgent: path.join(override, `${env.GUDMO_LAUNCHD_LABEL || "dev.gudmo.renew"}.plist`),
     };
   }
@@ -27,6 +28,7 @@ export function getPaths(env = process.env) {
     lock: path.join(stateRoot, "gudmo", "run.lock"),
     log: path.join(stateRoot, "gudmo", "gudmo.log"),
     schedulerLog: path.join(stateRoot, "gudmo", "scheduler.log"),
+    evalReport: path.join(stateRoot, "gudmo", "eval-latest.json"),
     launchAgent: path.join(home, "Library", "LaunchAgents", "dev.gudmo.renew.plist"),
   };
 }

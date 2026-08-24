@@ -7,7 +7,7 @@
     "gudmo": "./bin/gudmo.js"
   },
   "scripts": {
-    "check": "node --check bin/gudmo.js && node --check src/accounts.js && node --check src/cli.js && node --check src/cycle.js && node --check src/daemon.js && node --check src/rate-limits.js && node --check src/scheduler.js && node --check src/launchd.js",
+    "check": "node --check bin/gudmo.js && node --check src/accounts.js && node --check src/cli.js && node --check src/cycle.js && node --check src/daemon.js && node --check src/eval.js && node --check src/rate-limits.js && node --check src/scheduler.js && node --check src/launchd.js",
     "test": "node --test"
   },
   "engines": {

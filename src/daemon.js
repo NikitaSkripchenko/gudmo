@@ -7,7 +7,11 @@ import { executeTick, loadState } from "./scheduler.js";
 
 export function calculateNextSend({ state, serverWindows = [], config, nowMs }) {
   const lastSuccessMs = state.lastSuccessAt ? Date.parse(state.lastSuccessAt) : null;
-  const capBaseMs = lastSuccessMs ?? nowMs;
+  const lastAttemptMs = state.lastAttemptAt ? Date.parse(state.lastAttemptAt) : null;
+  const capBaseMs = Math.max(
+    Number.isFinite(lastSuccessMs) ? lastSuccessMs : 0,
+    Number.isFinite(lastAttemptMs) ? lastAttemptMs : 0,
+  ) || nowMs;
   const capAtMs = Math.max(nowMs, capBaseMs + config.maxIntervalSeconds * 1_000);
   const graceMs = config.resetGraceSeconds * 1_000;
   const candidates = serverWindows
@@ -31,6 +35,23 @@ export function calculateNextSend({ state, serverWindows = [], config, nowMs }) 
   if (Number.isFinite(retryMs)) {
     atMs = Math.max(nowMs, retryMs);
     reason = "retry-backoff";
+    sourceWindow = null;
+  }
+
+  const requestTimes = (state.requestHistory || [])
+    .map((request) => Date.parse(request.at))
+    .filter((atMs) => Number.isFinite(atMs) && atMs > nowMs - 24 * 60 * 60 * 1_000 && atMs <= nowMs);
+  const derivedRequestLimitMs = requestTimes.length >= config.maxRequestsPer24Hours
+    ? Math.min(...requestTimes) + 24 * 60 * 60 * 1_000
+    : null;
+  const persistedRequestLimitMs = state.requestLimitRetryAt ? Date.parse(state.requestLimitRetryAt) : null;
+  const requestLimitMs = Math.max(
+    Number.isFinite(derivedRequestLimitMs) ? derivedRequestLimitMs : 0,
+    Number.isFinite(persistedRequestLimitMs) ? persistedRequestLimitMs : 0,
+  );
+  if (Number.isFinite(requestLimitMs) && requestLimitMs > atMs) {
+    atMs = Math.max(nowMs, requestLimitMs);
+    reason = "daily-limit";
     sourceWindow = null;
   }
 
@@ -101,6 +122,8 @@ export async function runDaemon({
   runnerOptions,
   clock = Date.now,
   waiter = waitUntil,
+  verificationDelayMs,
+  verificationWaiter,
   signal,
   maxSends = Infinity,
 } = {}) {
@@ -127,6 +150,8 @@ export async function runDaemon({
       runnerOptions,
       verifier: reader,
       verifierOptions: readerOptions,
+      verificationDelayMs,
+      verificationWaiter,
     });
     if (result.status === "sent") {
       sends += 1;
@@ -145,6 +170,8 @@ export async function runAccountsDaemon({
   runner = runCodex,
   clock = Date.now,
   waiter = waitUntil,
+  verificationDelayMs,
+  verificationWaiter,
   signal,
   maxSends = Infinity,
 } = {}) {
@@ -210,6 +237,8 @@ export async function runAccountsDaemon({
         runnerOptions: { env: account.codexEnv, account },
         verifier: reader,
         verifierOptions: { env: account.codexEnv, account },
+        verificationDelayMs,
+        verificationWaiter,
       });
       if (result.status === "sent") {
         sends += 1;

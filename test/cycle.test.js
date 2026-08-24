@@ -45,6 +45,7 @@ test("one scheduling cycle plans every account sequentially then exits", async (
 
 test("a due cycle sends once, replans, and leaves no resident Node work", async (t) => {
   const paths = await setup(t);
+  let now = START;
   const [account] = createAccounts(paths).slice(0, 1);
   const state = createEmptyState();
   state.nextWakeAt = new Date(START).toISOString();
@@ -54,12 +55,20 @@ test("a due cycle sends once, replans, and leaves no resident Node work", async 
 
   const result = await runSchedulerCycle({
     paths,
-    clock: () => START,
+    clock: () => now,
+    verificationDelayMs: 60_000,
+    verificationWaiter: async (delayMs) => { now += delayMs; },
     accountLoader: async () => [account],
     accountPreparer: async (value) => value,
     reader: async () => {
       reads += 1;
-      return { fetchedAt: new Date(START).toISOString(), windows: [] };
+      return {
+        fetchedAt: new Date(now).toISOString(),
+        windows: [
+          { durationMinutes: 300, resetsAt: new Date(START + 5 * HOUR).toISOString(), usedPercent: 0 },
+          { durationMinutes: 10_080, resetsAt: new Date(START + 7 * 24 * HOUR).toISOString(), usedPercent: 0 },
+        ],
+      };
     },
     runner: async () => {
       sends += 1;
@@ -68,9 +77,9 @@ test("a due cycle sends once, replans, and leaves no resident Node work", async 
   });
 
   assert.equal(sends, 1);
-  assert.equal(reads, 1);
+  assert.equal(reads, 2);
   assert.equal(result.dueAccounts, 1);
-  assert.equal(result.delaySeconds, 5 * 60 * 60);
+  assert.equal(result.delaySeconds, 5 * 60 * 60 - 60);
 });
 
 test("a busy account lock uses a bounded 30-second retry instead of a tight loop", async (t) => {

@@ -41,6 +41,20 @@ test("the local cap schedules no later than five hours", () => {
   assert.equal(decision.reason, "five-hour-cap");
 });
 
+test("an unverified request uses its attempt time for the five-hour fallback", () => {
+  const state = createEmptyState();
+  state.lastAttemptAt = new Date(START).toISOString();
+  const decision = calculateNextSend({
+    state,
+    config: DEFAULT_CONFIG,
+    nowMs: START + 60_000,
+    serverWindows: [],
+  });
+
+  assert.equal(decision.at, "2026-08-11T05:00:00.000Z");
+  assert.equal(decision.reason, "five-hour-cap");
+});
+
 test("a failed due send retries on backoff instead of waiting for a new reset", () => {
   const state = createEmptyState();
   state.lastError = "offline";
@@ -54,6 +68,36 @@ test("a failed due send retries on backoff instead of waiting for a new reset", 
 
   assert.equal(decision.at, "2026-08-11T00:01:00.000Z");
   assert.equal(decision.reason, "retry-backoff");
+});
+
+test("the rolling request ceiling defers the daemon until capacity returns", () => {
+  const state = createEmptyState();
+  state.requestLimitRetryAt = new Date(START + 24 * HOUR).toISOString();
+  const decision = calculateNextSend({
+    state,
+    config: DEFAULT_CONFIG,
+    nowMs: START,
+    serverWindows: [{ resetsAt: new Date(START + HOUR).toISOString() }],
+  });
+
+  assert.equal(decision.at, "2026-08-12T00:00:00.000Z");
+  assert.equal(decision.reason, "daily-limit");
+});
+
+test("daemon derives request-limit deferral from history when persisted hint is absent", () => {
+  const state = createEmptyState();
+  state.requestHistory = Array.from({ length: 5 }, (_, index) => ({
+    at: new Date(START - (4 - index) * HOUR).toISOString(),
+  }));
+  const decision = calculateNextSend({
+    state,
+    config: DEFAULT_CONFIG,
+    nowMs: START,
+    serverWindows: [{ resetsAt: new Date(START + HOUR).toISOString() }],
+  });
+
+  assert.equal(decision.at, "2026-08-11T20:00:00.000Z");
+  assert.equal(decision.reason, "daily-limit");
 });
 
 test("an already consumed server reset is ignored before grace is added", () => {
@@ -94,12 +138,18 @@ test("daemon waits once for the planned reset and sends once", async (t) => {
     maxSends: 1,
     reader: async () => ({
       fetchedAt: new Date(now).toISOString(),
-      windows: [{ resetsAt: new Date(START + 2 * HOUR).toISOString() }],
+      windows: [300, 10_080].map((durationMinutes) => ({
+        durationMinutes,
+        resetsAt: new Date(START + 2 * HOUR).toISOString(),
+        usedPercent: 0,
+      })),
     }),
     waiter: async (timestamp) => {
       waitedUntil = timestamp;
       now = Date.parse(timestamp);
     },
+    verificationDelayMs: 60_000,
+    verificationWaiter: async (delayMs) => { now += delayMs; },
     runner: async () => {
       calls += 1;
       return { ok: true };
@@ -128,13 +178,17 @@ test("multi-account daemon schedules accounts independently without switching", 
     maxSends: 2,
     clock: () => now,
     waiter: async (timestamp) => { now = Date.parse(timestamp); },
+    verificationDelayMs: 60_000,
+    verificationWaiter: async (delayMs) => { now += delayMs; },
     accountLoader: async () => accounts,
     accountPreparer: async (account) => account,
     reader: async (_config, options) => ({
       fetchedAt: new Date(now).toISOString(),
-      windows: [{
+      windows: [300, 10_080].map((durationMinutes) => ({
+        durationMinutes,
         resetsAt: new Date(START + (options.account.key === "one" ? HOUR : 2 * HOUR)).toISOString(),
-      }],
+        usedPercent: 0,
+      })),
     }),
     runner: async (_config, options) => {
       calls.push({ key: options.account.key, codexHome: options.env.CODEX_HOME, at: now });
@@ -165,9 +219,18 @@ test("five-hour account re-discovery does not defer the five-hour send", async (
     maxSends: 1,
     clock: () => now,
     waiter: async (timestamp) => { now = Date.parse(timestamp); },
+    verificationDelayMs: 60_000,
+    verificationWaiter: async (delayMs) => { now += delayMs; },
     accountLoader: async () => [account],
     accountPreparer: async (value) => value,
-    reader: async () => ({ fetchedAt: new Date(now).toISOString(), windows: [] }),
+    reader: async () => ({
+      fetchedAt: new Date(now).toISOString(),
+      windows: [300, 10_080].map((durationMinutes) => ({
+        durationMinutes,
+        resetsAt: new Date(START + 5 * HOUR - 1_000).toISOString(),
+        usedPercent: 0,
+      })),
+    }),
     runner: async () => {
       sentAt = now;
       return { ok: true };
