@@ -142,6 +142,63 @@ test("the rolling 24-hour ceiling includes failed and forced requests", async (t
   assert.equal(calls, 6);
 });
 
+test("a manual run can bypass rolling request history for a due window", async (t) => {
+  const paths = await setup(t);
+  const state = createEmptyState();
+  state.requestHistory = [1, 2, 3, 4, 5].map((hoursAgo) => ({
+    at: new Date(START - hoursAgo * HOUR).toISOString(),
+    ok: true,
+    minimalReply: true,
+    usage: null,
+  }));
+  state.totalAttempts = 5;
+  await writeJsonAtomic(paths.state, state);
+  let sends = 0;
+
+  const result = await executeTickUntilVerified({
+    paths,
+    forceWindows: ["5h"],
+    onlyDueWindows: true,
+    ignoreRequestLimit: true,
+    clock: () => START,
+    runner: async () => {
+      sends += 1;
+      return { ok: true };
+    },
+    ...createAnchoredVerification(() => START, ["5h"]),
+  });
+
+  assert.equal(result.status, "sent");
+  assert.equal(sends, 1);
+  assert.equal((await loadState(paths.state)).requestHistory.length, 6);
+});
+
+test("progress reports the rolling request number instead of the lifetime attempt count", async (t) => {
+  const paths = await setup(t);
+  const state = createEmptyState();
+  state.totalAttempts = 15;
+  state.requestHistory = [
+    { at: "2026-08-10T02:00:00.000Z", ok: true, minimalReply: true, usage: null },
+    { at: "2026-08-10T03:00:00.000Z", ok: true, minimalReply: true, usage: null },
+  ];
+  await writeJsonAtomic(paths.state, state);
+  const progress = [];
+
+  await executeTick({
+    paths,
+    forceWindows: ["7d"],
+    clock: () => START,
+    runner: async () => ({ ok: false, error: "offline" }),
+    onProgress: (event) => progress.push(event),
+  });
+
+  assert.deepEqual(progress.find((event) => event.phase === "sending"), {
+    phase: "sending",
+    attempt: 3,
+    maxAttempts: 5,
+  });
+});
+
 test("concurrent ticks cannot double-send", async (t) => {
   const paths = await setup(t);
   let releaseRunner;
@@ -301,6 +358,100 @@ test("a manual run retries a floating timer on the short backoff", async (t) => 
   assert.equal(progress[3].nextAttempt, 2);
   assert.equal(progress[3].maxAttempts, 5);
   assert.equal(result.elapsedMs, 180_000);
+});
+
+test("a manual run stops after five floating-timer attempts", async (t) => {
+  const paths = await setup(t);
+  let now = START;
+  let sends = 0;
+  const progress = [];
+
+  const result = await executeTickUntilVerified({
+    paths,
+    forceWindows: ["5h"],
+    onlyDueWindows: true,
+    ignoreRequestLimit: true,
+    maxManualAttempts: 5,
+    clock: () => now,
+    verificationDelayMs: 60_000,
+    verificationWaiter: async (delayMs) => { now += delayMs; },
+    retryWaiter: async (delayMs) => { now += delayMs; },
+    onProgress: (event) => progress.push(event),
+    runner: async () => {
+      sends += 1;
+      return { ok: true };
+    },
+    verifier: async () => ({
+      fetchedAt: new Date(now).toISOString(),
+      windows: [{
+        durationMinutes: 300,
+        resetsAt: new Date(now + 5 * HOUR).toISOString(),
+        usedPercent: 0,
+      }],
+    }),
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.error, "5h window timer is still floating");
+  assert.equal(sends, 5);
+  assert.deepEqual(
+    progress.filter((event) => event.phase === "sending").map((event) => event.attempt),
+    [1, 2, 3, 4, 5],
+  );
+});
+
+test("a manual run skips a requested window whose timer is already active", async (t) => {
+  const paths = await setup(t);
+  const state = createEmptyState();
+  state.windows["5h"] = {
+    lastSuccessAt: new Date(START).toISOString(),
+    nextDueAt: new Date(START + 5 * HOUR).toISOString(),
+  };
+  await writeJsonAtomic(paths.state, state);
+  let sends = 0;
+
+  const result = await executeTickUntilVerified({
+    paths,
+    forceWindows: ["5h"],
+    onlyDueWindows: true,
+    clock: () => START + HOUR,
+    runner: async () => {
+      sends += 1;
+      return { ok: false, error: "unexpected send" };
+    },
+  });
+
+  assert.equal(result.status, "not-due");
+  assert.deepEqual(result.windows, []);
+  assert.equal(sends, 0);
+});
+
+test("a manual run sends only requested windows that are due", async (t) => {
+  const paths = await setup(t);
+  const state = createEmptyState();
+  state.windows["5h"] = {
+    lastSuccessAt: new Date(START).toISOString(),
+    nextDueAt: new Date(START + 5 * HOUR).toISOString(),
+  };
+  await writeJsonAtomic(paths.state, state);
+  let sends = 0;
+
+  const result = await executeTickUntilVerified({
+    paths,
+    forceWindows: ["5h", "7d"],
+    onlyDueWindows: true,
+    clock: () => START + HOUR,
+    runner: async () => {
+      sends += 1;
+      return { ok: true };
+    },
+    ...createAnchoredVerification(() => START + HOUR),
+  });
+
+  assert.equal(result.status, "sent");
+  assert.deepEqual(result.windows, ["7d"]);
+  assert.deepEqual(result.sentWindows, ["7d"]);
+  assert.equal(sends, 1);
 });
 
 test("pending verification does not swallow the remaining manual windows", async (t) => {

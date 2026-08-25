@@ -33,8 +33,8 @@ gudmo install --no-start
 gudmo doctor               Check the local setup
 gudmo eval --runs 20       Measure the repeatable token footprint
 gudmo eval --runs 20 --json  Emit the same eval as machine-readable JSON
-gudmo run                  Send a prompt now
-gudmo run --window 5h      Send for one usage window
+gudmo run                  Anchor any due usage-window timers
+gudmo run --window 5h      Anchor the 5-hour timer when it is due
 gudmo status               Show account and scheduler state
 gudmo status --refresh     Refresh server reset times
 gudmo logs --lines 50      Show recent activity
@@ -43,7 +43,7 @@ gudmo uninstall            Stop and remove the scheduler
 gudmo help                 Show all commands
 ```
 
-`gudmo run` takes about one minute when server window metadata is available. Gudmo runs isolated accounts concurrently, samples each reset before its prompt, waits 60 seconds, and samples again so it can distinguish an anchored timer from a reset that is still sliding with wall-clock time. If a background tick already holds an account lock, the manual command waits up to two minutes and reuses any window result completed while it waited.
+`gudmo run` skips accounts whose requested timers are already anchored and not due. For due timers, the explicit command bypasses the automatic scheduler's rolling request ceiling and makes up to five verified attempts. Each attempt takes about one minute when server window metadata is available. Gudmo runs isolated accounts concurrently, samples each reset before its prompt, waits 60 seconds, and samples again so it can distinguish an anchored timer from a reset that is still sliding with wall-clock time. If a background tick already holds an account lock, the manual command waits up to two minutes and reuses any window result completed while it waited. Locks left behind by interrupted processes are reclaimed immediately.
 
 Manual runs stream account-prefixed progress while they work: current-window checks, prompt attempts, timer-verification waits, lock contention, and retries. Final account results include elapsed time, so an intentional observation or backoff never looks like a hung command.
 
@@ -74,7 +74,7 @@ tokens/request = input_tokens + output_tokens
 T24 = p95(tokens/request across repeated runs) × max requests per rolling 24 hours
 ```
 
-Cached input tokens remain included in `input_tokens`; Gudmo does not discount them. The default scheduler, `run`, and `tick` paths share a hard ceiling of five attempted model requests in any rolling 24 hours, including failures and retries. When the ceiling is reached, scheduling resumes only after the oldest attempt leaves the window.
+Cached input tokens remain included in `input_tokens`; Gudmo does not discount them. The default scheduler and `tick` paths share a hard ceiling of five attempted model requests in any rolling 24 hours, including failures and retries. When the ceiling is reached, automatic scheduling resumes only after the oldest attempt leaves the window. An explicit `gudmo run` bypasses that automatic ceiling for due timers and has a separate five-attempt limit for the invocation, so manual usage can exceed T24.
 
 Run the production invocation 20 times and print a human-readable report:
 
@@ -94,7 +94,7 @@ Runtime state and rotating activity logs are stored in:
 
 Gudmo reads fresh reset metadata immediately before each prompt, waits 60 seconds after the prompt, and reads it again. A window is `anchored` when its reset stays fixed while wall-clock time advances. It is `still-floating` when the reset advances by approximately the observation interval, which means the prompt completed but failed to start the server timer. Missing metadata is `unavailable`, never success. Each result includes `updated`, `beforeResetsAt`, `afterResetsAt`, `changeSeconds`, and `observationSeconds`.
 
-A `still-floating` window remains due and retries after `retrySeconds`, subject to the rolling 24-hour request ceiling. A manual `gudmo run` performs that short retry itself; background cycles persist the same retry time for their next wake. Unavailable metadata gets one short verification-only retry without another model request; if it remains unavailable, Gudmo reports `unverified` and uses the local five-hour fallback. Activity logs use `success` only for verified anchored windows, `verification-failure` for floating timers, and `verification-pending`/`verification-unavailable` for missing metadata.
+A `still-floating` window remains due and retries after `retrySeconds`. A manual `gudmo run` performs up to five attempts regardless of rolling request history; background cycles persist the retry time for their next wake and remain subject to the rolling 24-hour ceiling. Unavailable metadata gets one short verification-only retry without another model request; if it remains unavailable, Gudmo reports `unverified` and uses the local five-hour fallback. Activity logs use `success` only for verified anchored windows, `verification-failure` for floating timers, and `verification-pending`/`verification-unavailable` for missing metadata.
 
 This comparison is observational evidence from the experimental Codex app-server metadata, not a guarantee of subscription behavior. For example, if the app-server exposes only its 10,080-minute window, Gudmo can verify `7d` while correctly reporting `5h` as unavailable.
 
@@ -115,7 +115,7 @@ node bin/gudmo.js help
 - Prompts delayed while the Mac is asleep run after it wakes.
 - Without `codex-auth`, Gudmo uses the Codex account active at execution time.
 - Token counts come from Codex CLI telemetry. They measure model tokens, not subscription quota percentages or billing.
-- Custom prompts and explicit eval runs can use more tokens than the default measured scheduler configuration.
+- Custom prompts, explicit manual runs, and eval runs can use more tokens than the default measured scheduler configuration.
 - Isolated account credentials are stored with owner-only permissions, but should still be treated as sensitive.
 
 ## License

@@ -62,18 +62,30 @@ export async function executeTickUntilVerified({
   retryWaiter = waitFor,
   lockRetryMs = 1_000,
   maxLockWaitMs = 120_000,
+  maxManualAttempts = 5,
   onProgress = null,
   ...options
 } = {}) {
-  const requestedWindows = options.forceWindows ? [...options.forceWindows] : null;
+  const startedAtMs = (options.clock || Date.now)();
+  let requestedWindows = options.forceWindows ? [...options.forceWindows] : null;
+  if (requestedWindows && options.onlyDueWindows) {
+    requestedWindows = dueWindows(
+      await loadState(options.paths.state),
+      { enabledWindows: requestedWindows },
+      startedAtMs,
+    );
+  }
+  if (requestedWindows?.length === 0) {
+    return withElapsed({ status: "not-due", windows: [] }, startedAtMs, options.clock);
+  }
   let remainingWindows = requestedWindows ? [...requestedWindows] : null;
   const sentWindows = new Set();
   const reusedWindows = new Set();
   const unverifiedWindows = new Set();
-  const startedAtMs = (options.clock || Date.now)();
   let lockWaitedMs = 0;
   let waitedForLock = false;
   let lastResult = null;
+  let manualAttempts = 0;
 
   while (true) {
     if (waitedForLock && remainingWindows) {
@@ -101,8 +113,11 @@ export async function executeTickUntilVerified({
       ...options,
       onProgress,
       forceWindows: remainingWindows || options.forceWindows,
+      attemptNumber: options.ignoreRequestLimit ? manualAttempts + 1 : null,
+      maxAttemptsOverride: options.ignoreRequestLimit ? maxManualAttempts : null,
     });
     lastResult = result;
+    if (options.ignoreRequestLimit && Number.isInteger(result.attempt)) manualAttempts += 1;
 
     if (result.status === "locked") {
       if (lockWaitedMs >= maxLockWaitMs) return withElapsed(result, startedAtMs, options.clock);
@@ -125,6 +140,9 @@ export async function executeTickUntilVerified({
     const retryableVerification = result.status === "verification-pending"
       || (result.status === "failed" && result.verification);
     if (retryableVerification && result.retryAt) {
+      if (options.ignoreRequestLimit && manualAttempts >= maxManualAttempts) {
+        return withElapsed({ ...result, retryAt: null }, startedAtMs, options.clock);
+      }
       const nowMs = (options.clock || Date.now)();
       const delayMs = Math.max(0, Date.parse(result.retryAt) - nowMs);
       if (result.status === "failed") {
@@ -146,8 +164,10 @@ export async function executeTickUntilVerified({
         ? (result.verificationOnly ? reusedWindows : sentWindows)
         : unverifiedWindows;
       for (const name of result.windows) destination.add(name);
+      for (const name of result.skippedWindows || []) reusedWindows.add(name);
       if (remainingWindows) {
-        remainingWindows = remainingWindows.filter((name) => !result.windows.includes(name));
+        const completedWindows = new Set([...result.windows, ...(result.skippedWindows || [])]);
+        remainingWindows = remainingWindows.filter((name) => !completedWindows.has(name));
         if (remainingWindows.length > 0) continue;
       }
       return withElapsed(buildManualRunResult({
@@ -209,6 +229,10 @@ export async function executeTick({
   verificationDelayMs = 60_000,
   verificationWaiter = waitFor,
   onProgress = null,
+  onlyDueWindows = false,
+  ignoreRequestLimit = false,
+  attemptNumber = null,
+  maxAttemptsOverride = null,
 } = {}) {
   const release = await acquireLock(paths.lock);
   if (!release) return { status: "locked", windows: [] };
@@ -217,9 +241,13 @@ export async function executeTick({
     const config = await loadConfig(paths.config);
     const state = await loadState(paths.state);
     const nowMs = clock();
-    const windows = forceWindows || dueWindows(state, config, nowMs);
+    const requestedWindows = forceWindows || dueWindows(state, config, nowMs);
+    const windows = forceWindows && onlyDueWindows
+      ? dueWindows(state, { enabledWindows: forceWindows }, nowMs)
+      : requestedWindows;
+    const skippedWindows = requestedWindows.filter((name) => !windows.includes(name));
 
-    if (windows.length === 0) return { status: "not-due", windows: [] };
+    if (windows.length === 0) return { status: "not-due", windows: [], skippedWindows };
     if (state.pendingVerification) {
       if (state.retryAt && Date.parse(state.retryAt) > nowMs) {
         return {
@@ -244,7 +272,7 @@ export async function executeTick({
 
     const cutoffMs = nowMs - 24 * 60 * 60 * 1_000;
     state.requestHistory = state.requestHistory.filter((request) => Date.parse(request.at) > cutoffMs);
-    if (state.requestHistory.length >= config.maxRequestsPer24Hours) {
+    if (!ignoreRequestLimit && state.requestHistory.length >= config.maxRequestsPer24Hours) {
       const retryAt = new Date(Date.parse(state.requestHistory[0].at) + 24 * 60 * 60 * 1_000).toISOString();
       state.requestLimitRetryAt = retryAt;
       await writeJsonAtomic(paths.state, state);
@@ -277,8 +305,8 @@ export async function executeTick({
     }
     await writeJsonAtomic(paths.state, state);
 
-    const attempt = state.totalAttempts;
-    const maxAttempts = config.maxRequestsPer24Hours;
+    const attempt = attemptNumber ?? state.requestHistory.length;
+    const maxAttempts = maxAttemptsOverride ?? config.maxRequestsPer24Hours;
     onProgress?.({ phase: "sending", attempt, maxAttempts });
     const result = await runner(config, runnerOptions);
     const completedMs = clock();
@@ -396,6 +424,7 @@ export async function executeTick({
     return {
       status: "sent",
       windows,
+      skippedWindows,
       at: completedAt,
       verification,
       rateLimits: observedRateLimits,

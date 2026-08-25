@@ -22,7 +22,7 @@ Usage:
   gudmo init                 Create the default configuration
   gudmo doctor               Check platform, Codex CLI, and ChatGPT login
   gudmo eval [--runs N]      Measure the repeatable 24-hour token footprint
-  gudmo run [--window NAME]  Send now; NAME is all, 5h, or 7d
+  gudmo run [--window NAME]  Anchor due timers; NAME is all, 5h, or 7d
   gudmo tick                 Send only when a configured window is due
   gudmo daemon               Run the reset-aware persistent scheduler
   gudmo status [--refresh]   Show or refresh reset times and scheduler state
@@ -134,6 +134,9 @@ export async function main(argv, { env = process.env, out = console.log, err = c
     return runForAccountsParallel(accounts, (account) => executeTickUntilVerified({
       paths: account.paths,
       forceWindows: windows,
+      onlyDueWindows: true,
+      ignoreRequestLimit: true,
+      maxManualAttempts: 5,
       runnerOptions: { env: account.codexEnv, account },
       verifier: readAccountRateLimits,
       verifierOptions: { env: account.codexEnv, account },
@@ -327,7 +330,9 @@ function printTickResult(result, out, err, quiet = false, account = null) {
   }
   else if (!quiet && result.status === "not-due") out(`${prefix}nothing due.`);
   else if (!quiet && result.status === "retry-wait") out(`${prefix}waiting to retry ${names} at ${result.retryAt}`);
-  else if (!quiet && result.status === "daily-limit") out(`${prefix}24-hour request ceiling reached; ${names} resumes at ${result.retryAt}${elapsed}`);
+  else if (result.status === "daily-limit") {
+    err(`${prefix}not reset: 24-hour request ceiling reached; scheduler will retry ${names} at ${result.retryAt}${elapsed}`);
+  }
   else if (!quiet && result.status === "locked") out(`${prefix}another gudmo tick is already running${elapsed}.`);
   else if (result.status === "verification-pending") {
     err(`${prefix}prompt sent for ${names}; window verification will retry at ${result.retryAt}`);

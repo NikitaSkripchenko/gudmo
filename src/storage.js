@@ -63,6 +63,11 @@ export async function acquireLock(lockPath, { staleAfterMs = 10 * 60 * 1_000 } =
       };
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
+      const owner = await readJson(path.join(lockPath, "owner.json"), null).catch(() => null);
+      if (isDeadProcess(owner?.pid)) {
+        await fs.rm(lockPath, { recursive: true, force: true });
+        continue;
+      }
       const stat = await fs.stat(lockPath).catch(() => null);
       if (!stat || Date.now() - stat.mtimeMs <= staleAfterMs || attempt > 0) return null;
       await fs.rm(lockPath, { recursive: true, force: true });
@@ -70,4 +75,14 @@ export async function acquireLock(lockPath, { staleAfterMs = 10 * 60 * 1_000 } =
   }
 
   return null;
+}
+
+function isDeadProcess(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error?.code === "ESRCH";
+  }
 }

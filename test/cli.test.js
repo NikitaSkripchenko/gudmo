@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { main, printRunProgress, runForAccountsParallel } from "../src/cli.js";
+import { createEmptyState } from "../src/scheduler.js";
 
 test("status initializes an isolated home and reports both manual windows due", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "gudmo-cli-test-"));
@@ -32,6 +33,32 @@ test("status initializes an isolated home and reports both manual windows due", 
     totalTokens: 0,
     requestCeiling: 5,
   });
+});
+
+test("manual run skips an account whose requested timer is already active", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "gudmo-cli-active-window-test-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const state = createEmptyState();
+  state.windows["5h"] = {
+    lastSuccessAt: "2026-08-25T14:00:00.000Z",
+    nextDueAt: "2099-08-25T19:00:00.000Z",
+  };
+  await fs.writeFile(path.join(root, "state.json"), JSON.stringify(state));
+  await fs.writeFile(path.join(root, "config.json"), JSON.stringify({
+    codexPath: path.join(root, "must-not-run"),
+  }));
+  const output = [];
+  const errors = [];
+
+  const code = await main(["run", "--window", "5h"], {
+    env: { GUDMO_HOME: root, HOME: root },
+    out: (line) => output.push(line),
+    err: (line) => errors.push(line),
+  });
+
+  assert.equal(code, 0);
+  assert.deepEqual(output, ["active account: nothing due."]);
+  assert.deepEqual(errors, []);
 });
 
 test("eval emits a machine-readable, repeatable T24 report", async (t) => {
@@ -95,6 +122,29 @@ test("manual account runs execute concurrently and report in registry order", as
     "one: sent prompt for 7d at one",
     "two: sent prompt for 7d at two",
     "three: sent prompt for 7d at three",
+  ]);
+});
+
+test("a manual run says an account was not reset when its rolling ceiling is reached", async () => {
+  const output = [];
+  const errors = [];
+
+  const code = await runForAccountsParallel(
+    [{ label: "work@example.com" }],
+    async () => ({
+      status: "daily-limit",
+      windows: ["5h", "7d"],
+      retryAt: "2026-08-25T16:08:59.396Z",
+      elapsedMs: 331_000,
+    }),
+    (line) => output.push(line),
+    (line) => errors.push(line),
+  );
+
+  assert.equal(code, 1);
+  assert.deepEqual(output, []);
+  assert.deepEqual(errors, [
+    "work@example.com: not reset: 24-hour request ceiling reached; scheduler will retry 5h + 7d at 2026-08-25T16:08:59.396Z (331s)",
   ]);
 });
 
