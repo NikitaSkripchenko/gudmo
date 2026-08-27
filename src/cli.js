@@ -8,18 +8,18 @@ import { readAccountRateLimits } from "./rate-limits.js";
 import { renewFiveHourWindow } from "./scheduler.js";
 import { writeJsonAtomic } from "./storage.js";
 
-const HELP = `gudmo - renew the Codex five-hour usage window
+const HELP = `gudmo - ensure the Codex five-hour usage window is active
 
 Usage:
-  gudmo run                  Renew and verify the 5h timer for every account
+  gudmo run                  Check every account; renew inactive 5h timers
   gudmo eval [--runs N] [--tier 1..5|all]
                              Measure production prompt token usage
   gudmo doctor               Check platform, Codex CLI, and ChatGPT login
   gudmo help                 Show this help
   gudmo version              Show the installed version
 
-Every run sends to all discovered accounts using isolated credentials.
-The command succeeds only when every account's 5h timer is verified renewed.
+Every run checks all discovered accounts using isolated credentials.
+Active timers are skipped; inactive timers must be verified renewed.
 `;
 
 export async function main(argv, { env = process.env, out = console.log, err = console.error } = {}) {
@@ -132,6 +132,10 @@ export function printRunProgress(event, account, write) {
 
 function printRenewalResult(result, account, out, err) {
   const elapsed = ` (${formatDuration(result.elapsedMs)})`;
+  if (result.status === "active") {
+    out(`${account}: 5h timer is already active; no prompt sent${elapsed}`);
+    return 0;
+  }
   if (result.status === "renewed" && result.reused) {
     out(`${account}: 5h timer was renewed by the concurrent run${elapsed}`);
     return 0;

@@ -1,6 +1,6 @@
 # gudmo
 
-`gudmo` renews the Codex five-hour usage-window timer for every local account and verifies that the timer was anchored.
+`gudmo` ensures the Codex five-hour usage-window timer is active for every local account. It renews only accounts whose window has not started yet.
 
 It is a manual macOS CLI, not a quota-increase tool. Each prompt consumes usage. Reset metadata comes from an experimental Codex app-server method and may change.
 
@@ -24,17 +24,18 @@ gudmo doctor
 gudmo run
 ```
 
-Every invocation sends a prompt to every discovered account. Gudmo does not skip an account because a previous timer is still active.
+Every invocation checks every discovered account. If its 300-minute reset arrives in less than five hours, the window is already active and Gudmo sends no prompt. A five-second precision allowance prevents a floating `now + 5h` reset from being mistaken for an active window.
 
 For each account, Gudmo:
 
 1. Reads the current 300-minute Codex window.
-2. Sends a nonce-bearing prompt that starts with a cheap exact-`OK` task.
-3. Waits 60 seconds and reads the window again.
-4. Succeeds only when the reset stops sliding with wall time.
-5. If needed, escalates generated work: 64 and 128 output words at medium reasoning, then 256 and 512 words at high reasoning.
+2. Stops successfully without a model call when the reset is less than five hours away.
+3. Otherwise sends a nonce-bearing prompt that starts with a cheap exact-`OK` task.
+4. Waits 60 seconds and reads the window again.
+5. Succeeds only when the reset stops sliding with wall time.
+6. If needed, escalates generated work: 64 and 128 output words at medium reasoning, then 256 and 512 words at high reasoning.
 
-Accounts run concurrently and print account-prefixed progress. The process exits with code 0 only when every account verifies renewal. Missing metadata, malformed telemetry, exhausted prompt tiers, or any account failure produces a nonzero exit.
+Accounts run concurrently and print account-prefixed progress. The process exits with code 0 when every account is either already active or verifies renewal. Missing metadata, malformed telemetry, exhausted prompt tiers, or any account failure produces a nonzero exit.
 
 The five prompt tiers make the common case inexpensive while allowing Gudmo to escalate when a tiny prompt does not renew the timer. A fresh nonce prevents the production request from being fully reusable as a cached prompt. Tier 1 replies exactly `OK`; later tiers deliberately generate bounded output because live testing showed that increasing input length alone does not reliably activate every account's window.
 
@@ -124,7 +125,7 @@ node bin/gudmo.js run
 
 ## Version 0.5.0
 
-Gudmo now focuses on one job: manually renewing and verifying the five-hour window for all accounts. Automatic scheduling, launchd installation, seven-day renewal, status/log commands, due-time skipping, and rolling request ceilings were removed.
+Gudmo now focuses on one job: ensuring the five-hour window is active for all accounts. Automatic scheduling, launchd installation, seven-day renewal, status/log commands, and rolling request ceilings were removed.
 
 ## License
 

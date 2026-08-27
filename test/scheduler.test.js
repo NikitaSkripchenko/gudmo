@@ -8,6 +8,7 @@ import { getPaths } from "../src/paths.js";
 import {
   buildFiveHourVerification,
   createEmptyState,
+  hasActiveFiveHourWindow,
   loadState,
   renewFiveHourWindow,
 } from "../src/scheduler.js";
@@ -50,7 +51,48 @@ test("verification fails closed without comparable five-hour metadata", () => {
   assert.equal(result.status, "unavailable");
 });
 
-test("every renewal invocation sends after a previous success", async (t) => {
+test("a five-hour reset arriving in less than five hours is already active", () => {
+  assert.equal(hasActiveFiveHourWindow({
+    fetchedAt: "2026-08-27T00:00:00.000Z",
+    windows: [windowAt("2026-08-27T04:30:00.000Z")],
+  }), true);
+});
+
+test("a floating reset near five hours is not mistaken for an active window", () => {
+  assert.equal(hasActiveFiveHourWindow({
+    fetchedAt: "2026-08-27T00:00:00.500Z",
+    windows: [windowAt("2026-08-27T05:00:00.000Z")],
+  }), false);
+  assert.equal(hasActiveFiveHourWindow({
+    fetchedAt: "2026-08-27T00:00:00.000Z",
+    windows: [],
+  }), false);
+});
+
+test("renewal skips an account whose five-hour window is already active", async (t) => {
+  const paths = await setup(t);
+  let sends = 0;
+  let reads = 0;
+  const result = await renewFiveHourWindow({
+    paths,
+    clock: () => START,
+    runner: async () => { sends += 1; return successfulCodexResult(); },
+    verifier: async () => {
+      reads += 1;
+      return {
+        fetchedAt: new Date(START).toISOString(),
+        windows: [windowAt(new Date(START + 4 * HOUR).toISOString())],
+      };
+    },
+  });
+
+  assert.equal(result.status, "active");
+  assert.equal(result.attempts, 0);
+  assert.equal(sends, 0);
+  assert.equal(reads, 1);
+});
+
+test("a later invocation skips the still-active window", async (t) => {
   const paths = await setup(t);
   let now = START;
   let sends = 0;
@@ -65,8 +107,8 @@ test("every renewal invocation sends after a previous success", async (t) => {
     verifier: anchoredReader(() => now),
   };
   assert.equal((await renewFiveHourWindow(options)).status, "renewed");
-  assert.equal((await renewFiveHourWindow(options)).status, "renewed");
-  assert.equal(sends, 2);
+  assert.equal((await renewFiveHourWindow(options)).status, "active");
+  assert.equal(sends, 1);
 });
 
 test("a floating timer escalates to a larger production prompt", async (t) => {

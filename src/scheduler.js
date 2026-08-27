@@ -6,6 +6,9 @@ import { buildRenewalPrompt, PROMPT_TIERS } from "./prompt.js";
 import { readAccountRateLimits } from "./rate-limits.js";
 import { acquireLock, readJson, writeJsonAtomic } from "./storage.js";
 
+const FIVE_HOURS_MS = 5 * 60 * 60 * 1_000;
+const RESET_PRECISION_TOLERANCE_MS = 5_000;
+
 export function createEmptyState() {
   return {
     version: STATE_VERSION,
@@ -77,6 +80,15 @@ export function buildFiveHourVerification({
   };
 }
 
+export function hasActiveFiveHourWindow({ fetchedAt, windows = [] } = {}) {
+  const window = findFiveHourWindow(windows);
+  const fetchedMs = Date.parse(fetchedAt);
+  const resetMs = Date.parse(window?.resetsAt);
+  if (!Number.isFinite(fetchedMs) || !Number.isFinite(resetMs)) return false;
+  const remainingMs = resetMs - fetchedMs;
+  return remainingMs > 0 && remainingMs < FIVE_HOURS_MS - RESET_PRECISION_TOLERANCE_MS;
+}
+
 export async function renewFiveHourWindow({
   paths,
   runner = runCodex,
@@ -131,6 +143,14 @@ export async function renewFiveHourWindow({
       const prompt = buildRenewalPrompt({ tier, nonce: nonceFactory() });
       onProgress?.({ phase: "checking", attempt, tier });
       const before = await readSnapshot(verifier, config, verifierOptions, clock);
+      if (tier === 0 && hasActiveFiveHourWindow(before)) {
+        return withElapsed({
+          status: "active",
+          attempts: 0,
+          tier: null,
+          verification: null,
+        }, startedAtMs, clock);
+      }
       const state = await loadState(paths.state);
       state.lastAttemptAt = new Date(clock()).toISOString();
       state.totalAttempts += 1;

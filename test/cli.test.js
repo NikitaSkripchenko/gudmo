@@ -52,6 +52,26 @@ test("one unverified account makes the aggregate run fail", async () => {
   ]);
 });
 
+test("an already active account is a successful no-send result", async () => {
+  const output = [];
+  const errors = [];
+  const code = await runForAccountsParallel(
+    [{ label: "active" }, { label: "renewed" }],
+    async ({ label }) => label === "active"
+      ? { status: "active", attempts: 0, elapsedMs: 100 }
+      : { status: "renewed", attempts: 1, tier: 0, elapsedMs: 60_000 },
+    (line) => output.push(line),
+    (line) => errors.push(line),
+  );
+
+  assert.equal(code, 0);
+  assert.deepEqual(output, [
+    "active: 5h timer is already active; no prompt sent (0s)",
+    "renewed: renewed 5h timer with tier 1 in 1 attempt (1m)",
+  ]);
+  assert.deepEqual(errors, []);
+});
+
 test("manual run progress names account, prompt tier, and waits", () => {
   const output = [];
   const write = (line) => output.push(line);

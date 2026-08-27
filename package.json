@@ -1,7 +1,7 @@
 {
   "name": "gudmo",
   "version": "0.5.0",
-  "description": "Reliably renew the Codex five-hour usage window for every local account.",
+  "description": "Ensure the Codex five-hour usage window is active for every local account.",
   "type": "module",
   "bin": {
     "gudmo": "./bin/gudmo.js"

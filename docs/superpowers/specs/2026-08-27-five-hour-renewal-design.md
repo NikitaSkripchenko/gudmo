@@ -2,9 +2,9 @@
 
 ## Goal
 
-`gudmo run` renews the Codex five-hour usage-window timer for every discovered account. The command succeeds only when Gudmo can verify renewal for every account whose five-hour window metadata is available.
+`gudmo run` ensures the Codex five-hour usage-window timer is active for every discovered account. It skips model usage when the reset is already less than five hours away and otherwise renews the window. The command succeeds only when every account is already active or has verified renewal.
 
-Gudmo cannot guarantee behavior that the upstream Codex service does not expose. Its guarantee is therefore operational: it sends a real, non-cacheable prompt to every account, verifies the five-hour reset metadata, retries with a larger prompt when needed, and returns a nonzero exit code for any account it cannot verify.
+Gudmo cannot guarantee behavior that the upstream Codex service does not expose. Its guarantee is therefore operational: it reads every account, skips active windows, sends a real non-cacheable prompt when renewal is needed, verifies the reset metadata, and returns a nonzero exit code for any account it cannot classify or verify.
 
 ## Supported Product Surface
 
@@ -29,18 +29,19 @@ Also remove seven-day-window behavior, launchd integration, background schedulin
 
 ## Run Behavior
 
-Every explicit `gudmo run` invocation performs work. It does not consult a locally calculated due time and does not skip an account because an earlier timer remains active.
+Every explicit `gudmo run` invocation reads fresh server metadata for every account. A 300-minute reset arriving in less than five hours means the window is already active, so no prompt is sent. The comparison includes a five-second precision allowance because server resets have second precision while the client timestamp has milliseconds. Missing metadata continues into renewal rather than incorrectly skipping an account.
 
 The flow for each account is:
 
 1. Prepare its isolated `CODEX_HOME` when the account came from `codex-auth`.
 2. Read the current five-hour rate-limit window.
-3. Send the first production prompt tier with a fresh nonce.
-4. Wait for the observation interval.
-5. Read the five-hour window again.
-6. Succeed when the reset is fixed or changed in a way that demonstrates the timer was anchored.
-7. If the reset continues sliding with wall-clock time, retry with the next, larger prompt tier.
-8. Stop after five attempts and fail that account if renewal is still unverified.
+3. Return `active` without a prompt when its reset is less than five hours away.
+4. Otherwise send the first production prompt tier with a fresh nonce.
+5. Wait for the observation interval.
+6. Read the five-hour window again.
+7. Succeed when the reset is fixed or changed in a way that demonstrates the timer was anchored.
+8. If the reset continues sliding with wall-clock time, retry with the next workload tier.
+9. Stop after five attempts and fail that account if renewal is still unverified.
 
 Accounts run concurrently so one slow account does not serialize the full command. Results remain ordered according to account discovery. The overall command exits with code 0 only when every account succeeds.
 
@@ -130,7 +131,8 @@ Verification proceeds in layers:
 ## Acceptance Criteria
 
 - The CLI builds and runs on macOS with Node.js 20 or newer.
-- Every `gudmo run` invocation sends a prompt to every discovered account.
+- Every `gudmo run` invocation checks every discovered account.
+- Accounts with less than five hours remaining are skipped without a model call.
 - Only the five-hour timer is targeted and evaluated.
 - Each successful account has observable five-hour renewal evidence.
 - Any failed or unverified account makes the overall command fail.

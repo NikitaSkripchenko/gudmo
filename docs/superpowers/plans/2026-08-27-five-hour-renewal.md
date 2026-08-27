@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make every `gudmo run` invocation send the smallest effective prompt needed to renew and verify the Codex five-hour timer for every discovered account.
+**Goal:** Make every `gudmo run` invocation ensure the Codex five-hour timer is active for every discovered account, without sending when less than five hours remain.
 
 **Architecture:** Replace the scheduler-oriented state machine with a manual renewal pipeline. A pure prompt builder supplies five nonce-bearing workload tiers; each account runs under its existing isolated credentials and lock, verifies only the 300-minute server window, and escalates generated output plus reasoning effort until renewal is observed or five attempts fail. Keep `eval` on the same prompt builder, while deleting scheduling, launchd, seven-day, status, and logging surfaces.
 
@@ -14,7 +14,7 @@
 
 - Support macOS with Node.js 20 or newer.
 - Add no runtime dependencies.
-- Every `gudmo run` invocation sends to every discovered account; no due-time skip is allowed.
+- Every `gudmo run` invocation checks every discovered account and skips model usage when fresh metadata shows less than five hours remaining.
 - Only the 300-minute Codex window is targeted or reported.
 - Exit successfully only when every account is verified renewed.
 - Use at most five prompt attempts per account, escalating only after failed verification.
@@ -25,6 +25,8 @@
 ## Live Calibration Amendment
 
 The initial task steps below record the original input-size hypothesis. Live end-to-end testing falsified it: a 1,024-word input with an `OK`-only response did not anchor one account. The implemented tiers instead escalate generated output and reasoning effort: exact `OK`/low, 64 words/medium, 128 words/medium, 256 words/high, and 512 words/high. The final configuration is defined in `src/prompt.js`, covered by `test/prompt.test.js`, and reflected in the updated design spec and README. Where the original task samples below mention `PROMPT_WORD_COUNTS`, input payload growth, or exact `OK` at every tier, this calibration amendment supersedes them.
+
+The final user correction also supersedes original always-send requirements: a fresh 300-minute reset less than five hours away is already active and returns success without a prompt. `hasActiveFiveHourWindow` applies a five-second precision allowance so a floating reset near exactly five hours is still renewed.
 
 ---
 

@@ -2,7 +2,7 @@
 
 ## Verdict
 
-**PASS** — the final production build sent a prompt to all three discovered accounts concurrently, verified each 300-minute reset as anchored, and exited with code 0.
+**PASS** — the final production build checked all three discovered accounts, recognized every 300-minute window as already active, sent no model prompts, and exited with code 0.
 
 ## Environment
 
@@ -16,7 +16,7 @@
 
 ## Automated Verification
 
-- `npm test`: 46 passed, 0 failed
+- `npm test`: 50 passed, 0 failed
 - `npm run check`: all retained JavaScript files passed `node --check`
 - `node bin/gudmo.js help`: only `run`, `eval`, `doctor`, `help`, and `version` exposed
 - `node bin/gudmo.js version`: `gudmo 0.5.0`
@@ -62,7 +62,7 @@ Production tiers were changed to generated-work escalation:
 | 4 | 256 words | high |
 | 5 | 512 words | high |
 
-## Final All-Account Run
+## Renewal Calibration Run
 
 The modified production command sent tier 1 to all accounts concurrently. Final ordered results:
 
@@ -76,10 +76,25 @@ The modified production command sent tier 1 to all accounts concurrently. Final 
 - Verified accounts: 3/3
 - Credentials or email addresses stored in this report: none
 
+## Final Active-Window Run
+
+The corrected production command first compared each five-hour reset with its fresh metadata timestamp. All three resets were less than five hours away, so every account returned `active` without a model call:
+
+| Account | Status | Prompts | Elapsed |
+|---|---|---:|---:|
+| account-1 | active | 0 | 1s |
+| account-2 | active | 0 | 1s |
+| account-3 | active | 0 | 1s |
+
+- Aggregate exit code: 0
+- Accounts checked: 3/3
+- Model prompts sent: 0
+
 ## Acceptance Criteria
 
 - App runs on macOS with Node.js 20+: PASS
-- `run` sends to every discovered account: PASS, observed 3/3 concurrently
+- `run` checks every discovered account: PASS, observed 3/3 concurrently
+- Active windows with less than five hours remaining are skipped: PASS, 3/3 live accounts and 0 prompts
 - Only the five-hour window is evaluated: PASS
 - Success requires observable anchored reset metadata: PASS
 - Any unverified account fails the aggregate command: PASS in automated and initial live testing
@@ -90,4 +105,4 @@ The modified production command sent tier 1 to all accounts concurrently. Final 
 
 ## PR Summary
 
-QA reduced Gudmo to manual five-hour renewal, calibrated adaptive prompt workloads with live account evidence, and verified 3/3 accounts renewed; automated suite: 46 passed, 0 failed.
+QA reduced Gudmo to five-hour activation, calibrated adaptive renewal workloads, and verified 3/3 active accounts were skipped without model calls; automated suite: 50 passed, 0 failed.

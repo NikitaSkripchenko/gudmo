@@ -5,7 +5,7 @@
   "nodeVersion": "26.3.1",
   "codexVersion": "0.145.0",
   "automatedTests": {
-    "passed": 46,
+    "passed": 50,
     "failed": 0
   },
   "eval": {
@@ -20,35 +20,30 @@
   "renewal": {
     "accountCount": 3,
     "verifiedAccounts": 3,
+    "promptsSent": 0,
     "exitCode": 0,
     "result": "PASS",
     "accounts": [
       {
         "id": "account-1",
-        "status": "renewed",
-        "tier": 1,
-        "attempts": 1,
-        "elapsedSeconds": 66,
-        "changeSeconds": 0,
-        "observationSeconds": 65
+        "status": "active",
+        "tier": null,
+        "attempts": 0,
+        "elapsedSeconds": 1
       },
       {
         "id": "account-2",
-        "status": "renewed",
-        "tier": 1,
-        "attempts": 1,
-        "elapsedSeconds": 66,
-        "changeSeconds": 0,
-        "observationSeconds": 65
+        "status": "active",
+        "tier": null,
+        "attempts": 0,
+        "elapsedSeconds": 1
       },
       {
         "id": "account-3",
-        "status": "renewed",
-        "tier": 1,
-        "attempts": 1,
-        "elapsedSeconds": 66,
-        "changeSeconds": 0,
-        "observationSeconds": 65
+        "status": "active",
+        "tier": null,
+        "attempts": 0,
+        "elapsedSeconds": 1
       }
     ]
   }
