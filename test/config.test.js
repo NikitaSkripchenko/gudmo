@@ -4,51 +4,46 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { ensureConfig, loadConfig } from "../src/config.js";
+import { DEFAULT_CONFIG } from "../src/constants.js";
 
-test("ensureConfig creates and loads defaults", async (t) => {
-  const root = await temporaryDirectory(t);
-  const file = path.join(root, "config.json");
+test("ensureConfig creates only manual renewal runtime settings", async (t) => {
+  const file = path.join(await temporaryDirectory(t), "config.json");
   const config = await ensureConfig(file);
 
-  assert.equal(config.message, "Reply only: OK");
-  assert.equal(config.maxRequestsPer24Hours, 5);
-  assert.deepEqual(config.enabledWindows, ["5h", "7d"]);
-  assert.equal(config.reasoningEffort, "low");
-  assert.equal(config.maxIntervalSeconds, 18_000);
+  assert.deepEqual(config, DEFAULT_CONFIG);
+  assert.deepEqual(JSON.parse(await fs.readFile(file, "utf8")), DEFAULT_CONFIG);
 });
 
-test("loadConfig rejects invalid window names", async (t) => {
-  const root = await temporaryDirectory(t);
-  const file = path.join(root, "config.json");
-  await fs.writeFile(file, JSON.stringify({ enabledWindows: ["monthly"] }));
-
-  await assert.rejects(loadConfig(file), /only contain 5h and 7d/);
-});
-
-test("ensureConfig upgrades only the legacy default prompt", async (t) => {
-  const root = await temporaryDirectory(t);
-  const file = path.join(root, "config.json");
-  await fs.writeFile(file, JSON.stringify({ message: "gudmo", retrySeconds: 90 }));
+test("ensureConfig removes legacy scheduler and prompt settings", async (t) => {
+  const file = path.join(await temporaryDirectory(t), "config.json");
+  await fs.writeFile(file, JSON.stringify({
+    message: "legacy",
+    enabledWindows: ["5h", "7d"],
+    maxRequestsPer24Hours: 5,
+    timeoutSeconds: 90,
+  }));
 
   const config = await ensureConfig(file);
   const stored = JSON.parse(await fs.readFile(file, "utf8"));
-
-  assert.equal(config.message, "Reply only: OK");
-  assert.equal(config.retrySeconds, 90);
-  assert.equal(stored.message, "Reply only: OK");
+  assert.equal(config.timeoutSeconds, 90);
+  assert.equal("message" in stored, false);
+  assert.equal("enabledWindows" in stored, false);
+  assert.equal("maxRequestsPer24Hours" in stored, false);
 });
 
-test("loadConfig rejects a request ceiling outside the measurable range", async (t) => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "gudmo-config-ceiling-test-"));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
-  const file = path.join(root, "config.json");
-  await fs.writeFile(file, JSON.stringify({ maxRequestsPer24Hours: 0 }));
+test("loadConfig validates the remaining runtime settings", async (t) => {
+  const root = await temporaryDirectory(t);
+  const invalidTimeout = path.join(root, "timeout.json");
+  const invalidRetry = path.join(root, "retry.json");
+  await fs.writeFile(invalidTimeout, JSON.stringify({ timeoutSeconds: 9 }));
+  await fs.writeFile(invalidRetry, JSON.stringify({ retrySeconds: 3601 }));
 
-  await assert.rejects(loadConfig(file), /maxRequestsPer24Hours must be an integer from 1 to 100/);
+  await assert.rejects(loadConfig(invalidTimeout), /timeoutSeconds/);
+  await assert.rejects(loadConfig(invalidRetry), /retrySeconds/);
 });
 
 async function temporaryDirectory(t) {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "gudmo-test-"));
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "gudmo-config-test-"));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   return directory;
 }

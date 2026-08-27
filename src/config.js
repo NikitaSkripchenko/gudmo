@@ -1,35 +1,25 @@
-import { DEFAULT_CONFIG, WINDOW_DEFINITIONS } from "./constants.js";
+import { DEFAULT_CONFIG } from "./constants.js";
 import { readJson, writeJsonAtomic } from "./storage.js";
 
 const ALLOWED_REASONING = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+const CONFIG_KEYS = Object.freeze(Object.keys(DEFAULT_CONFIG));
 
 export async function ensureConfig(configPath) {
-  const existing = await readJson(configPath, null);
-  if (existing === null) {
-    await writeJsonAtomic(configPath, DEFAULT_CONFIG);
-  } else if (existing.message === "gudmo") {
-    await writeJsonAtomic(configPath, { ...existing, message: DEFAULT_CONFIG.message });
-  }
-  return loadConfig(configPath);
+  const input = await readJson(configPath, {});
+  const config = validateConfig(input);
+  const stored = Object.fromEntries(CONFIG_KEYS.map((key) => [key, config[key]]));
+  if (JSON.stringify(input) !== JSON.stringify(stored)) await writeJsonAtomic(configPath, stored);
+  return stored;
 }
 
 export async function loadConfig(configPath) {
-  const input = await readJson(configPath, {});
-  const config = { ...DEFAULT_CONFIG, ...input };
+  return validateConfig(await readJson(configPath, {}));
+}
 
-  if (typeof config.message !== "string" || config.message.length === 0 || config.message.length > 100) {
-    throw new Error("config.message must be a non-empty string of at most 100 characters");
-  }
-  validateSeconds("maxIntervalSeconds", config.maxIntervalSeconds, 60, 5 * 60 * 60);
-  if (!Number.isInteger(config.maxRequestsPer24Hours)
-    || config.maxRequestsPer24Hours < 1
-    || config.maxRequestsPer24Hours > 100) {
-    throw new Error("config.maxRequestsPer24Hours must be an integer from 1 to 100");
-  }
-  validateSeconds("resetGraceSeconds", config.resetGraceSeconds, 0, 60);
-  validateSeconds("retrySeconds", config.retrySeconds, 5, 86_400);
+function validateConfig(input) {
+  const config = { ...DEFAULT_CONFIG, ...pickSupported(input) };
+  validateSeconds("retrySeconds", config.retrySeconds, 5, 3_600);
   validateSeconds("timeoutSeconds", config.timeoutSeconds, 10, 600);
-  if (config.pollSeconds !== undefined) validateSeconds("pollSeconds", config.pollSeconds, 5, 3_600);
   if (config.model !== null && (typeof config.model !== "string" || !config.model.trim())) {
     throw new Error("config.model must be null or a non-empty string");
   }
@@ -39,15 +29,11 @@ export async function loadConfig(configPath) {
   if (!ALLOWED_REASONING.has(config.reasoningEffort)) {
     throw new Error(`config.reasoningEffort must be one of: ${[...ALLOWED_REASONING].join(", ")}`);
   }
-  if (!Array.isArray(config.enabledWindows) || config.enabledWindows.length === 0) {
-    throw new Error("config.enabledWindows must contain 5h, 7d, or both");
-  }
-  const enabledWindows = [...new Set(config.enabledWindows)];
-  if (enabledWindows.some((name) => !WINDOW_DEFINITIONS[name])) {
-    throw new Error("config.enabledWindows may only contain 5h and 7d");
-  }
+  return config;
+}
 
-  return { ...config, enabledWindows };
+function pickSupported(input) {
+  return Object.fromEntries(CONFIG_KEYS.filter((key) => key in input).map((key) => [key, input[key]]));
 }
 
 function validateSeconds(name, value, minimum, maximum) {
