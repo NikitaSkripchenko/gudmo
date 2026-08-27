@@ -1,15 +1,14 @@
 import { execFile } from "node:child_process";
-import fs from "node:fs/promises";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export async function runDoctor(config, { platform = process.platform, accounts = null } = {}) {
+export async function runDoctor(config, { platform = process.platform, accounts = null, runner = run } = {}) {
   const checks = [
     {
       name: "platform",
       ok: platform === "darwin",
-      detail: platform === "darwin" ? "macOS launchd is supported" : `${platform} can run manually; background install is unsupported`,
+      detail: platform === "darwin" ? "macOS is supported" : `${platform} is unsupported; Gudmo requires macOS`,
     },
     {
       name: "node",
@@ -18,18 +17,7 @@ export async function runDoctor(config, { platform = process.platform, accounts 
     },
   ];
 
-  const caffeinateAvailable = platform !== "darwin"
-    ? false
-    : await fs.access("/usr/bin/caffeinate").then(() => true).catch(() => false);
-  checks.push({
-    name: "caffeinate",
-    ok: caffeinateAvailable,
-    detail: caffeinateAvailable
-      ? "/usr/bin/caffeinate is available"
-      : "caffeinate is required for the AC-power-aware macOS scheduler",
-  });
-
-  const version = await run(config.codexPath, ["--version"]);
+  const version = await runner(config.codexPath, ["--version"]);
   checks.push({ name: "codex", ok: version.ok, detail: version.output || version.error });
 
   const isolatedAccounts = accounts?.filter((account) => account.isolated) || [];
@@ -52,7 +40,7 @@ export async function runDoctor(config, { platform = process.platform, accounts 
     });
   } else {
     const auth = version.ok
-      ? await run(config.codexPath, ["login", "status"])
+      ? await runner(config.codexPath, ["login", "status"])
       : { ok: false, output: "", error: "Codex CLI is unavailable" };
     const chatGptAuth = auth.ok && /logged in using chatgpt/i.test(auth.output);
     checks.push({

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { VERSION } from "./constants.js";
 
 const INITIALIZE_ID = 1;
 const RATE_LIMITS_ID = 2;
@@ -74,7 +75,7 @@ export async function readAccountRateLimits(config, options = {}) {
       id: INITIALIZE_ID,
       method: "initialize",
       params: {
-        clientInfo: { name: "gudmo", version: "0.4.2" },
+        clientInfo: { name: "gudmo", version: VERSION },
         capabilities: { experimentalApi: true },
       },
     });

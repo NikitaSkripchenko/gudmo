@@ -1,13 +1,13 @@
 {
   "name": "gudmo",
-  "version": "0.4.2",
-  "description": "Best-effort scheduler for tiny Codex keepalive prompts.",
+  "version": "0.5.0",
+  "description": "Reliably renew the Codex five-hour usage window for every local account.",
   "type": "module",
   "bin": {
     "gudmo": "./bin/gudmo.js"
   },
   "scripts": {
-    "check": "node --check bin/gudmo.js && node --check src/accounts.js && node --check src/cli.js && node --check src/cycle.js && node --check src/daemon.js && node --check src/eval.js && node --check src/rate-limits.js && node --check src/scheduler.js && node --check src/launchd.js",
+    "check": "node --check bin/gudmo.js && node --check src/accounts.js && node --check src/cli.js && node --check src/codex.js && node --check src/config.js && node --check src/constants.js && node --check src/doctor.js && node --check src/eval.js && node --check src/paths.js && node --check src/prompt.js && node --check src/rate-limits.js && node --check src/scheduler.js && node --check src/storage.js",
     "test": "node --test"
   },
   "engines": {

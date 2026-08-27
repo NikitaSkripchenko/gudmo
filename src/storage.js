@@ -1,8 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-export const MAX_LOG_BYTES = 1 * 1_024 * 1_024;
-
 export async function readJson(file, fallback) {
   try {
     return JSON.parse(await fs.readFile(file, "utf8"));
@@ -32,23 +30,6 @@ export async function writeTextAtomic(file, value, mode = 0o600) {
     await fs.unlink(temporary).catch(() => {});
     throw error;
   }
-}
-
-export async function appendLog(file, entry, { maxBytes = MAX_LOG_BYTES } = {}) {
-  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-  const line = `${JSON.stringify(entry)}\n`;
-  const size = await fs.stat(file).then((stat) => stat.size).catch((error) => {
-    if (error?.code === "ENOENT") return 0;
-    throw error;
-  });
-  if (size > 0 && size + Buffer.byteLength(line, "utf8") > maxBytes) {
-    const archive = `${file}.1`;
-    await fs.rm(archive, { force: true });
-    await fs.rename(file, archive).catch((error) => {
-      if (error?.code !== "ENOENT") throw error;
-    });
-  }
-  await fs.appendFile(file, line, { encoding: "utf8", mode: 0o600 });
 }
 
 export async function acquireLock(lockPath, { staleAfterMs = 10 * 60 * 1_000 } = {}) {
