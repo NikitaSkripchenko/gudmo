@@ -48,14 +48,14 @@ Accounts run concurrently so one slow account does not serialize the full comman
 
 The prompt must be small enough to minimize usage but substantial enough to trigger real model work. It must also avoid becoming a fully reusable cached request.
 
-Each tier contains:
+Every tier contains:
 
 - A fresh random nonce.
-- A deterministic inspection task over supplied text.
-- An instruction to perform the task silently.
-- An exact `OK` response contract.
+- A bounded task with explicit output expectations.
 
-The first tier is deliberately modest. Each retry expands the supplied task input while keeping the reply to `OK`. Prompt construction is a pure function so its size, nonce placement, and response contract are unit-testable.
+The first tier is deliberately modest: low reasoning and an exact `OK` reply. Retries escalate generated work and reasoning effort: 64 and 128 output words at medium reasoning, then 256 and 512 words at high reasoning. Prompt construction is a pure function so nonce placement, workload, reasoning effort, and response contracts are unit-testable.
+
+Live calibration established why both dimensions matter. A 1,024-word input prompt with an `OK`-only response left one Plus account's timer floating, as did a low-reasoning request that generated 766 output tokens. A high-reasoning request generating 2,444 output tokens moved that account from 0% to 1% and anchored the five-hour reset. The final production tier matches that successful bounded workload.
 
 The initial tier sizes and escalation curve are implementation constants, not user configuration. Live end-to-end results may justify tuning them before completion. The final values must be recorded in tests and the README.
 
@@ -89,9 +89,9 @@ A manual run encountering an existing live lock waits for a bounded period and r
 `gudmo eval` is retained as an internal live measurement command. It executes the same prompt-builder and Codex invocation used by `run`, across all configured tiers or a selected tier, and records:
 
 - Gudmo and Codex versions.
-- Prompt tier and input size.
+- Prompt tier, target output, and reasoning effort.
 - Per-run input, cached-input, output, and total tokens.
-- Reply-contract compliance.
+- Tier-specific response-contract compliance.
 - Median and p95 token totals.
 
 Eval calls consume real usage. They are not part of renewal success and do not substitute for the end-to-end `run` verification.
@@ -109,7 +109,7 @@ Eval calls consume real usage. They are not part of renewal success and do not s
 
 Unit tests cover:
 
-- Prompt uniqueness, tier sizes, deterministic task structure, and exact reply contract.
+- Prompt uniqueness, tier workloads, deterministic task structure, reasoning escalation, and tier-specific reply contracts.
 - Five-hour-only verification classification.
 - Retry escalation and the five-attempt cap.
 - Always-send behavior on repeated manual invocations.

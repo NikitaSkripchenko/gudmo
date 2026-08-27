@@ -4,7 +4,7 @@
 
 **Goal:** Make every `gudmo run` invocation send the smallest effective prompt needed to renew and verify the Codex five-hour timer for every discovered account.
 
-**Architecture:** Replace the scheduler-oriented state machine with a manual renewal pipeline. A pure prompt builder supplies five nonce-bearing prompt tiers; each account runs under its existing isolated credentials and lock, verifies only the 300-minute server window, and escalates tiers until renewal is observed or five attempts fail. Keep `eval` on the same prompt builder, while deleting scheduling, launchd, seven-day, status, and logging surfaces.
+**Architecture:** Replace the scheduler-oriented state machine with a manual renewal pipeline. A pure prompt builder supplies five nonce-bearing workload tiers; each account runs under its existing isolated credentials and lock, verifies only the 300-minute server window, and escalates generated output plus reasoning effort until renewal is observed or five attempts fail. Keep `eval` on the same prompt builder, while deleting scheduling, launchd, seven-day, status, and logging surfaces.
 
 **Tech Stack:** Node.js 20+, ECMAScript modules, built-in `node:test`, Codex CLI JSON events, Codex app-server JSON-RPC, macOS.
 
@@ -21,6 +21,10 @@
 - Keep `eval`, `doctor`, `help`, and `version`; remove all other commands.
 - Preserve isolated `codex-auth` credentials and per-account concurrency locks.
 - Never report missing or malformed server metadata as success.
+
+## Live Calibration Amendment
+
+The initial task steps below record the original input-size hypothesis. Live end-to-end testing falsified it: a 1,024-word input with an `OK`-only response did not anchor one account. The implemented tiers instead escalate generated output and reasoning effort: exact `OK`/low, 64 words/medium, 128 words/medium, 256 words/high, and 512 words/high. The final configuration is defined in `src/prompt.js`, covered by `test/prompt.test.js`, and reflected in the updated design spec and README. Where the original task samples below mention `PROMPT_WORD_COUNTS`, input payload growth, or exact `OK` at every tier, this calibration amendment supersedes them.
 
 ---
 

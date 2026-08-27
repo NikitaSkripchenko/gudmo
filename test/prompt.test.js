@@ -1,27 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildRenewalPrompt, PROMPT_WORD_COUNTS } from "../src/prompt.js";
+import { buildRenewalPrompt, PROMPT_TIERS } from "../src/prompt.js";
 
-test("renewal prompts have five increasing tiers", () => {
-  assert.deepEqual(PROMPT_WORD_COUNTS, [64, 128, 256, 512, 1024]);
-  const prompts = PROMPT_WORD_COUNTS.map((_, tier) => (
-    buildRenewalPrompt({ tier, nonce: "nonce-a" })
-  ));
-  const lengths = prompts.map(({ message }) => message.length);
-
-  assert.deepEqual(lengths, [...lengths].sort((left, right) => left - right));
-  assert.equal(new Set(lengths).size, 5);
-  assert.deepEqual(prompts.map(({ wordCount }) => wordCount), PROMPT_WORD_COUNTS);
+test("renewal tiers escalate generated work and reasoning", () => {
+  assert.deepEqual(PROMPT_TIERS, [
+    { outputWords: 0, reasoningEffort: "low" },
+    { outputWords: 64, reasoningEffort: "medium" },
+    { outputWords: 128, reasoningEffort: "medium" },
+    { outputWords: 256, reasoningEffort: "high" },
+    { outputWords: 512, reasoningEffort: "high" },
+  ]);
 });
 
-test("a renewal prompt includes its nonce once and demands an exact OK reply", () => {
+test("tier one is a unique cheap exact-OK request", () => {
   const prompt = buildRenewalPrompt({ tier: 0, nonce: "unique-nonce" });
-  const payload = prompt.message.split("Payload: ")[1];
-
   assert.equal(prompt.message.split("unique-nonce").length - 1, 1);
   assert.match(prompt.message, /Reply exactly OK/);
-  assert.equal(payload.trim().split(/\s+/).length, 64);
-  assert.equal(payload.trim().split(/\s+/).at(-1), "pine");
+  assert.equal(prompt.outputWords, 0);
+  assert.equal(prompt.reasoningEffort, "low");
+});
+
+test("the final tier requests the live-verified bounded workload", () => {
+  const prompt = buildRenewalPrompt({ tier: 4, nonce: "unique-nonce" });
+  assert.equal(prompt.message.split("unique-nonce").length - 1, 1);
+  assert.match(prompt.message, /exactly 512 words/);
+  assert.match(prompt.message, /final word DONE/);
+  assert.equal(prompt.outputWords, 512);
+  assert.equal(prompt.reasoningEffort, "high");
 });
 
 test("unknown tiers and empty nonces are rejected", () => {

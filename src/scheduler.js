@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { STATE_VERSION } from "./constants.js";
 import { loadConfig } from "./config.js";
 import { runCodex } from "./codex.js";
-import { buildRenewalPrompt, PROMPT_WORD_COUNTS } from "./prompt.js";
+import { buildRenewalPrompt, PROMPT_TIERS } from "./prompt.js";
 import { readAccountRateLimits } from "./rate-limits.js";
 import { acquireLock, readJson, writeJsonAtomic } from "./storage.js";
 
@@ -96,7 +96,7 @@ export async function renewFiveHourWindow({
   let lockWaitedMs = 0;
   let lastResult = null;
 
-  for (let tier = 0; tier < PROMPT_WORD_COUNTS.length; tier += 1) {
+  for (let tier = 0; tier < PROMPT_TIERS.length; tier += 1) {
     let release = await acquireLock(paths.lock);
     while (!release) {
       if (lockWaitedMs >= maxLockWaitMs) {
@@ -136,8 +136,18 @@ export async function renewFiveHourWindow({
       state.totalAttempts += 1;
       await writeJsonAtomic(paths.state, state);
 
-      onProgress?.({ phase: "sending", attempt, maxAttempts: PROMPT_WORD_COUNTS.length, tier, wordCount: prompt.wordCount });
-      const codexResult = await runner({ ...config, message: prompt.message }, runnerOptions);
+      onProgress?.({
+        phase: "sending",
+        attempt,
+        maxAttempts: PROMPT_TIERS.length,
+        tier,
+        outputWords: prompt.outputWords,
+      });
+      const codexResult = await runner({
+        ...config,
+        message: prompt.message,
+        reasoningEffort: prompt.reasoningEffort,
+      }, runnerOptions);
       if (!codexResult.ok) {
         lastResult = {
           status: "failed",
@@ -178,7 +188,8 @@ export async function renewFiveHourWindow({
             : (verification.status === "unavailable" ? "unverified" : "failed"),
           attempts: attempt,
           tier,
-          wordCount: prompt.wordCount,
+          outputWords: prompt.outputWords,
+          reasoningEffort: prompt.reasoningEffort,
           error: verification.status === "still-floating"
             ? "5h window timer is still floating"
             : (verification.status === "unavailable" ? "5h window verification is unavailable" : null),
@@ -192,9 +203,9 @@ export async function renewFiveHourWindow({
       await release();
     }
 
-    if (tier < PROMPT_WORD_COUNTS.length - 1) {
+    if (tier < PROMPT_TIERS.length - 1) {
       const config = await loadConfig(paths.config);
-      onProgress?.({ phase: "retrying", nextAttempt: tier + 2, maxAttempts: PROMPT_WORD_COUNTS.length, delayMs: config.retrySeconds * 1_000 });
+      onProgress?.({ phase: "retrying", nextAttempt: tier + 2, maxAttempts: PROMPT_TIERS.length, delayMs: config.retrySeconds * 1_000 });
       await retryWaiter(config.retrySeconds * 1_000);
     }
   }

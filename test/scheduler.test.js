@@ -72,21 +72,23 @@ test("every renewal invocation sends after a previous success", async (t) => {
 test("a floating timer escalates to a larger production prompt", async (t) => {
   const paths = await setup(t);
   let now = START;
-  const messages = [];
+  const configs = [];
   const result = await renewFiveHourWindow({
     paths,
     clock: () => now,
-    nonceFactory: () => `nonce-${messages.length}`,
+    nonceFactory: () => `nonce-${configs.length}`,
     verificationDelayMs: MINUTE,
     verificationWaiter: async (delay) => { now += delay; },
     retryWaiter: async () => {},
-    runner: async (config) => { messages.push(config.message); return successfulCodexResult(); },
+    runner: async (config) => { configs.push(config); return successfulCodexResult(); },
     verifier: floatingThenAnchoredReader(() => now, 1),
   });
   assert.equal(result.status, "renewed");
   assert.equal(result.attempts, 2);
   assert.equal(result.tier, 1);
-  assert.ok(messages[1].length > messages[0].length);
+  assert.equal(configs[0].reasoningEffort, "low");
+  assert.equal(configs[1].reasoningEffort, "medium");
+  assert.match(configs[1].message, /exactly 64 words/);
 });
 
 test("five floating results exhaust all prompt tiers", async (t) => {

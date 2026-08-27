@@ -1,0 +1,55 @@
+{
+  "date": "2026-08-27",
+  "version": "0.5.0",
+  "platform": "macOS",
+  "nodeVersion": "26.3.1",
+  "codexVersion": "0.145.0",
+  "automatedTests": {
+    "passed": 46,
+    "failed": 0
+  },
+  "eval": {
+    "tier": 1,
+    "runs": 3,
+    "measurableRuns": 3,
+    "validReplies": 3,
+    "medianTotalTokens": 17602,
+    "p95TotalTokens": 18061,
+    "result": "PASS"
+  },
+  "renewal": {
+    "accountCount": 3,
+    "verifiedAccounts": 3,
+    "exitCode": 0,
+    "result": "PASS",
+    "accounts": [
+      {
+        "id": "account-1",
+        "status": "renewed",
+        "tier": 1,
+        "attempts": 1,
+        "elapsedSeconds": 66,
+        "changeSeconds": 0,
+        "observationSeconds": 65
+      },
+      {
+        "id": "account-2",
+        "status": "renewed",
+        "tier": 1,
+        "attempts": 1,
+        "elapsedSeconds": 66,
+        "changeSeconds": 0,
+        "observationSeconds": 65
+      },
+      {
+        "id": "account-3",
+        "status": "renewed",
+        "tier": 1,
+        "attempts": 1,
+        "elapsedSeconds": 66,
+        "changeSeconds": 0,
+        "observationSeconds": 65
+      }
+    ]
+  }
+}

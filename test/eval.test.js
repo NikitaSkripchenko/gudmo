@@ -20,7 +20,9 @@ test("eval builds every call through the production prompt builder", async () =>
     clock: () => Date.parse("2026-08-27T12:00:00.000Z"),
     runner: async (config) => {
       messages.push(config.message);
-      return sample(100 + messages.length, true);
+      return config.message.includes("exactly 128 words")
+        ? sample(500 + messages.length, false, 200)
+        : sample(100 + messages.length, true);
     },
   });
 
@@ -29,7 +31,7 @@ test("eval builds every call through the production prompt builder", async () =>
   assert.match(messages[2], /nonce-2-0/);
   assert.ok(messages[2].length > messages[0].length);
   assert.deepEqual(report.tiers.map(({ tier }) => tier), [1, 3]);
-  assert.deepEqual(report.tiers.map(({ wordCount }) => wordCount), [64, 256]);
+  assert.deepEqual(report.tiers.map(({ outputWords }) => outputWords), [0, 128]);
   assert.equal(report.tiers[0].p95Tokens, 102);
   assert.equal(report.result, "PASS");
   assert.equal(report.metadata.codexVersion, "codex-cli test");
@@ -50,7 +52,7 @@ test("eval fails when telemetry or exact OK is missing", async () => {
 
   assert.equal(report.result, "FAIL");
   assert.equal(report.tiers[0].measurableRuns, 1);
-  assert.equal(report.tiers[0].exactReplies, 1);
+  assert.equal(report.tiers[0].validReplies, 1);
 });
 
 test("eval validates run counts and tier indexes", async () => {
@@ -69,12 +71,12 @@ test("formatted eval reports per-tier token measurements", async () => {
   });
   const formatted = formatTokenEval(report);
   assert.match(formatted, /Production Prompt Eval/);
-  assert.match(formatted, /Tier 1: 64 words/);
+  assert.match(formatted, /Tier 1: exact OK/);
   assert.match(formatted, /P95 tokens: 123/);
   assert.match(formatted, /Result:\s+PASS/);
 });
 
-function sample(totalTokens, minimalReply) {
+function sample(totalTokens, minimalReply, outputTokens = 1) {
   return {
     ok: true,
     startedAt: "2026-08-27T12:00:00.000Z",
@@ -83,9 +85,9 @@ function sample(totalTokens, minimalReply) {
     reply: minimalReply ? "OK" : "no",
     minimalReply,
     usage: {
-      inputTokens: totalTokens - 1,
+      inputTokens: totalTokens - outputTokens,
       cachedInputTokens: 0,
-      outputTokens: 1,
+      outputTokens,
       totalTokens,
     },
   };

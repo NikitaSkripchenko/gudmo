@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { VERSION } from "./constants.js";
 import { runCodex } from "./codex.js";
-import { buildRenewalPrompt, PROMPT_WORD_COUNTS } from "./prompt.js";
+import { buildRenewalPrompt, PROMPT_TIERS } from "./prompt.js";
 
 export async function runTokenEval({
   config,
@@ -18,9 +18,9 @@ export async function runTokenEval({
     throw new Error("runs must be an integer from 1 to 100");
   }
   if (!Array.isArray(tiers) || tiers.length === 0 || tiers.some((tier) => (
-    !Number.isInteger(tier) || tier < 0 || tier >= PROMPT_WORD_COUNTS.length
+    !Number.isInteger(tier) || tier < 0 || tier >= PROMPT_TIERS.length
   ))) {
-    throw new Error(`tier indexes must be integers from 0 to ${PROMPT_WORD_COUNTS.length - 1}`);
+    throw new Error(`tier indexes must be integers from 0 to ${PROMPT_TIERS.length - 1}`);
   }
 
   const tierReports = [];
@@ -30,7 +30,11 @@ export async function runTokenEval({
     for (let run = 0; run < runs; run += 1) {
       const prompt = buildRenewalPrompt({ tier, nonce: nonceFactory({ tier, run }) });
       promptCharacters = Math.max(promptCharacters, prompt.message.length);
-      samples.push(await runner({ ...config, message: prompt.message }, runnerOptions));
+      samples.push(await runner({
+        ...config,
+        message: prompt.message,
+        reasoningEffort: prompt.reasoningEffort,
+      }, runnerOptions));
     }
     tierReports.push(buildTierReport({ tier, samples, promptCharacters }));
   }
@@ -58,10 +62,10 @@ export function formatTokenEval(report) {
   for (const tier of report.tiers) {
     lines.push(
       "",
-      `Tier ${tier.tier}: ${tier.wordCount} words`,
+      `Tier ${tier.tier}: ${tier.outputWords === 0 ? "exact OK" : `${tier.outputWords} output words / ${tier.reasoningEffort} reasoning`}`,
       `Runs:                     ${tier.runs}`,
       `Measurable runs:          ${tier.measurableRuns}/${tier.runs}`,
-      `Exact OK replies:         ${tier.exactReplies}/${tier.runs}`,
+      `Valid replies:            ${tier.validReplies}/${tier.runs}`,
       `Median tokens:            ${tier.medianTokens ?? "unavailable"}`,
       `P95 tokens: ${tier.p95Tokens ?? "unavailable"}`,
     );
@@ -83,17 +87,22 @@ export async function readCodexVersion(config, { env = process.env } = {}) {
 }
 
 function buildTierReport({ tier, samples, promptCharacters }) {
+  const definition = PROMPT_TIERS[tier];
   const measurable = samples.filter((sample) => sample.ok && Number.isFinite(sample.usage?.totalTokens));
   const totals = measurable.map((sample) => sample.usage.totalTokens);
-  const exactReplies = samples.filter((sample) => sample.ok && sample.minimalReply === true).length;
-  const passed = measurable.length === samples.length && exactReplies === samples.length;
+  const validReplies = samples.filter((sample) => definition.outputWords === 0
+    ? sample.ok && sample.minimalReply === true
+    : sample.ok && Number.isFinite(sample.usage?.outputTokens)
+      && sample.usage.outputTokens >= definition.outputWords).length;
+  const passed = measurable.length === samples.length && validReplies === samples.length;
   return {
     tier: tier + 1,
-    wordCount: PROMPT_WORD_COUNTS[tier],
+    outputWords: definition.outputWords,
+    reasoningEffort: definition.reasoningEffort,
     promptCharacters,
     runs: samples.length,
     measurableRuns: measurable.length,
-    exactReplies,
+    validReplies,
     medianTokens: percentile(totals, 50),
     p95Tokens: percentile(totals, 95),
     result: passed ? "PASS" : "FAIL",

@@ -1,8 +1,8 @@
 # gudmo
 
-`gudmo` is a small macOS CLI that schedules measured, minimal Codex prompts around your account's usage-window resets.
+`gudmo` renews the Codex five-hour usage-window timer for every local account and verifies that the timer was anchored.
 
-It is a best-effort local scheduler, not a way to increase your OpenAI plan's quota. Codex limit behavior is not guaranteed, and every prompt consumes some usage. Gudmo reports model token telemetry separately from Codex usage-window percentages; it does not claim that the two are equivalent.
+It is a manual macOS CLI, not a quota-increase tool. Each prompt consumes usage. Reset metadata comes from an experimental Codex app-server method and may change.
 
 ## Requirements
 
@@ -13,94 +13,101 @@ It is a best-effort local scheduler, not a way to increase your OpenAI plan's qu
 
 ## Install
 
-Clone the repository, then run:
-
 ```sh
 npm link
 gudmo doctor
-gudmo install
 ```
 
-`gudmo install` creates and starts a macOS launch agent. To create it without starting the scheduler:
+## Renew every account
 
 ```sh
-gudmo install --no-start
+gudmo run
 ```
 
-## Usage
+Every invocation sends a prompt to every discovered account. Gudmo does not skip an account because a previous timer is still active.
+
+For each account, Gudmo:
+
+1. Reads the current 300-minute Codex window.
+2. Sends a nonce-bearing prompt that starts with a cheap exact-`OK` task.
+3. Waits 60 seconds and reads the window again.
+4. Succeeds only when the reset stops sliding with wall time.
+5. If needed, escalates generated work: 64 and 128 output words at medium reasoning, then 256 and 512 words at high reasoning.
+
+Accounts run concurrently and print account-prefixed progress. The process exits with code 0 only when every account verifies renewal. Missing metadata, malformed telemetry, exhausted prompt tiers, or any account failure produces a nonzero exit.
+
+The five prompt tiers make the common case inexpensive while allowing Gudmo to escalate when a tiny prompt does not renew the timer. A fresh nonce prevents the production request from being fully reusable as a cached prompt. Tier 1 replies exactly `OK`; later tiers deliberately generate bounded output because live testing showed that increasing input length alone does not reliably activate every account's window.
+
+## Internal prompt evaluation
+
+`eval` makes live Codex calls and consumes usage. It measures the exact prompt builder used by `run`.
+
+```sh
+gudmo eval --runs 3
+gudmo eval --runs 3 --tier 3
+gudmo eval --runs 3 --tier all
+gudmo eval --runs 3 --tier 1 --json
+```
+
+The default is tier 1. Each tier report includes target output, reasoning effort, measurable calls, valid replies, median tokens, p95 tokens, and per-call telemetry. Reports are also saved as `eval-latest.json` in Gudmo's state directory.
+
+## Commands
 
 ```text
-gudmo doctor               Check the local setup
-gudmo eval --runs 20       Measure the repeatable token footprint
-gudmo eval --runs 20 --json  Emit the same eval as machine-readable JSON
-gudmo run                  Anchor any due usage-window timers
-gudmo run --window 5h      Anchor the 5-hour timer when it is due
-gudmo status               Show account and scheduler state
-gudmo status --refresh     Refresh server reset times
-gudmo logs --lines 50      Show recent activity
-gudmo install              Install and start the scheduler
-gudmo uninstall            Stop and remove the scheduler
-gudmo help                 Show all commands
+gudmo run                         Renew every account's 5h timer
+gudmo eval [--runs N] [--tier 1..5|all] [--json]
+                                  Measure production prompt tiers
+gudmo doctor                      Check Codex and credentials
+gudmo help                        Show help
+gudmo version                     Show the installed version
 ```
 
-`gudmo run` skips accounts whose requested timers are already anchored and not due. For due timers, the explicit command bypasses the automatic scheduler's rolling request ceiling and makes up to five verified attempts. Each attempt takes about one minute when server window metadata is available. Gudmo runs isolated accounts concurrently, samples each reset before its prompt, waits 60 seconds, and samples again so it can distinguish an anchored timer from a reset that is still sliding with wall-clock time. If a background tick already holds an account lock, the manual command waits up to two minutes and reuses any window result completed while it waited. Locks left behind by interrupted processes are reclaimed immediately.
+## Accounts and credentials
 
-Manual runs stream account-prefixed progress while they work: current-window checks, prompt attempts, timer-verification waits, lock contention, and retries. Final account results include elapsed time, so an intentional observation or backoff never looks like a hung command.
+Without `codex-auth`, Gudmo uses the active Codex account. When a compatible registry exists, Gudmo discovers every account and creates a private, isolated `CODEX_HOME` for each one. It copies the corresponding credential snapshot with owner-only permissions and never switches the user's active Codex account.
 
-## How it works
+Account renewal operations run concurrently. A per-account lock prevents duplicate simultaneous prompts. A second `gudmo run` waits up to two minutes for an existing renewal and reuses its verified result when possible. Dead-process locks are reclaimed.
 
-Gudmo reads the reset times reported by the local Codex app server and schedules the next prompt just after the earliest reset. A five-hour local cap is used as a fallback when reset data is unavailable.
+## Configuration and state
 
-The scheduler runs only when needed. While waiting, macOS uses `caffeinate -s`, which prevents sleep on AC power but allows normal sleep on battery.
-
-If a `codex-auth` registry is present, Gudmo detects its accounts automatically and gives each one an isolated `CODEX_HOME`. It does not switch your active Codex account or replace `~/.codex/auth.json`.
-
-## Configuration
-
-Gudmo creates its configuration on first use:
+Configuration is created automatically:
 
 ```text
 ~/.config/gudmo/config.json
 ```
 
-The defaults use the prompt `Reply only: OK`, low reasoning effort, both the 5-hour and 7-day windows, a five-request rolling 24-hour ceiling, and the current Codex default model. Existing configurations using the former default prompt, `gudmo`, are migrated automatically; custom prompts are preserved. Run `gudmo init` to create the file explicitly.
+Supported settings are:
 
-### Measurable token footprint
+- `codexPath`
+- `model`
+- `reasoningEffort`
+- `timeoutSeconds`
+- `retrySeconds`
 
-Gudmo's repeatable metric is **T24**, the conservative estimated token footprint of a default rolling 24-hour window:
+Legacy scheduler, window, request-ceiling, and custom-message keys are removed when configuration is loaded.
 
-```text
-tokens/request = input_tokens + output_tokens
-T24 = p95(tokens/request across repeated runs) × max requests per rolling 24 hours
-```
-
-Cached input tokens remain included in `input_tokens`; Gudmo does not discount them. The default scheduler and `tick` paths share a hard ceiling of five attempted model requests in any rolling 24 hours, including failures and retries. When the ceiling is reached, automatic scheduling resumes only after the oldest attempt leaves the window. An explicit `gudmo run` bypasses that automatic ceiling for due timers and has a separate five-attempt limit for the invocation, so manual usage can exceed T24.
-
-Run the production invocation 20 times and print a human-readable report:
-
-```sh
-gudmo eval --runs 20
-```
-
-The eval passes only when every run reports valid token telemetry and replies with exactly `OK`. It records the Gudmo version, Codex version, model, reasoning effort, prompt, timestamp, per-run usage, median, p95, and T24 estimate. The same report is saved to `~/.local/state/gudmo/eval-latest.json`; `--json` also prints it for CI or comparison.
-
-`gudmo eval` deliberately makes the requested number of live Codex calls and is separate from the scheduler ceiling. Use it intentionally: the eval itself consumes usage and its calls are not included in the T24 scheduler estimate.
-
-Runtime state and rotating activity logs are stored in:
+Runtime state and isolated account homes are stored under:
 
 ```text
 ~/.local/state/gudmo/
 ```
 
-Gudmo reads fresh reset metadata immediately before each prompt, waits 60 seconds after the prompt, and reads it again. A window is `anchored` when its reset stays fixed while wall-clock time advances. It is `still-floating` when the reset advances by approximately the observation interval, which means the prompt completed but failed to start the server timer. Missing metadata is `unavailable`, never success. Each result includes `updated`, `beforeResetsAt`, `afterResetsAt`, `changeSeconds`, and `observationSeconds`.
+Set `GUDMO_HOME` to place configuration and state together in another directory. This is useful for isolated testing.
 
-A `still-floating` window remains due and retries after `retrySeconds`. A manual `gudmo run` performs up to five attempts regardless of rolling request history; background cycles persist the retry time for their next wake and remain subject to the rolling 24-hour ceiling. Unavailable metadata gets one short verification-only retry without another model request; if it remains unavailable, Gudmo reports `unverified` and uses the local five-hour fallback. Activity logs use `success` only for verified anchored windows, `verification-failure` for floating timers, and `verification-pending`/`verification-unavailable` for missing metadata.
+## Verification semantics
 
-This comparison is observational evidence from the experimental Codex app-server metadata, not a guarantee of subscription behavior. For example, if the app-server exposes only its 10,080-minute window, Gudmo can verify `7d` while correctly reporting `5h` as unavailable.
+Gudmo compares the five-hour reset timestamp before and after a real prompt:
+
+- `renewed`: the reset is fixed, usage increased, or reset movement differs from wall-clock drift.
+- `still-floating`: the reset advanced by approximately the observation interval; Gudmo escalates the prompt.
+- `unavailable`: comparable 300-minute metadata is missing; Gudmo performs one metadata-only retry, then fails without claiming success.
+- `failed`: the Codex call failed or all five tiers left the timer floating.
+
+This is observable evidence from experimental metadata, not a service-level guarantee from OpenAI.
 
 ## Development
 
-The test suite uses fake Codex executables and does not contact a model:
+Tests use fake Codex executables and do not contact a model:
 
 ```sh
 npm test
@@ -108,15 +115,16 @@ npm run check
 node bin/gudmo.js help
 ```
 
-## Limitations
+Live verification intentionally consumes usage:
 
-- Background scheduling is supported on macOS only.
-- Reset-time data comes from an experimental Codex app-server method and may change.
-- Prompts delayed while the Mac is asleep run after it wakes.
-- Without `codex-auth`, Gudmo uses the Codex account active at execution time.
-- Token counts come from Codex CLI telemetry. They measure model tokens, not subscription quota percentages or billing.
-- Custom prompts, explicit manual runs, and eval runs can use more tokens than the default measured scheduler configuration.
-- Isolated account credentials are stored with owner-only permissions, but should still be treated as sensitive.
+```sh
+node bin/gudmo.js eval --runs 3 --tier 1 --json
+node bin/gudmo.js run
+```
+
+## Version 0.5.0
+
+Gudmo now focuses on one job: manually renewing and verifying the five-hour window for all accounts. Automatic scheduling, launchd installation, seven-day renewal, status/log commands, due-time skipping, and rolling request ceilings were removed.
 
 ## License
 

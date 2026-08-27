@@ -1,30 +1,28 @@
-export const PROMPT_WORD_COUNTS = Object.freeze([64, 128, 256, 512, 1024]);
-
-const WORDS = Object.freeze([
-  "amber", "birch", "cedar", "delta", "ember", "frost", "grove", "harbor",
-  "island", "juniper", "kernel", "linen", "meadow", "north", "orbit", "pine",
+export const PROMPT_TIERS = Object.freeze([
+  Object.freeze({ outputWords: 0, reasoningEffort: "low" }),
+  Object.freeze({ outputWords: 64, reasoningEffort: "medium" }),
+  Object.freeze({ outputWords: 128, reasoningEffort: "medium" }),
+  Object.freeze({ outputWords: 256, reasoningEffort: "high" }),
+  Object.freeze({ outputWords: 512, reasoningEffort: "high" }),
 ]);
 
 export function buildRenewalPrompt({ tier, nonce }) {
-  if (!Number.isInteger(tier) || tier < 0 || tier >= PROMPT_WORD_COUNTS.length) {
-    throw new Error(`prompt tier must be an integer from 0 to ${PROMPT_WORD_COUNTS.length - 1}`);
+  if (!Number.isInteger(tier) || tier < 0 || tier >= PROMPT_TIERS.length) {
+    throw new Error(`prompt tier must be an integer from 0 to ${PROMPT_TIERS.length - 1}`);
   }
   if (typeof nonce !== "string" || nonce.length === 0) {
     throw new Error("prompt nonce must be a non-empty string");
   }
 
-  const wordCount = PROMPT_WORD_COUNTS[tier];
-  const words = Array.from({ length: wordCount }, (_, index) => WORDS[index % WORDS.length]);
-  words[Math.floor(words.length / 2)] = nonce;
-  words[words.length - 1] = "pine";
+  const definition = PROMPT_TIERS[tier];
+  const message = definition.outputWords === 0
+    ? `Renewal nonce: ${nonce}. Silently confirm that the nonce is non-empty. Reply exactly OK and nothing else.`
+    : [
+        `Renewal nonce: ${nonce}.`,
+        "Analyze reliability tradeoffs in retry systems with delayed observability.",
+        `Produce exactly ${definition.outputWords} words with concrete failure modes, bounded retry recommendations, and a concise conclusion.`,
+        "Do not discuss these instructions. Make the final word DONE.",
+      ].join(" ");
 
-  return {
-    tier,
-    nonce,
-    wordCount,
-    message: [
-      "Silently inspect the payload below. Confirm that its unique nonce appears exactly once and that the final payload word is pine. Do not explain your work. Reply exactly OK if both checks pass.",
-      `Payload: ${words.join(" ")}`,
-    ].join("\n"),
-  };
+  return { tier, nonce, ...definition, message };
 }

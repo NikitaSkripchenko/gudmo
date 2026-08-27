@@ -119,7 +119,8 @@ export function printRunProgress(event, account, write) {
   } else if (event.phase === "checking") {
     write(`${prefix}checking current 5h window...`);
   } else if (event.phase === "sending") {
-    write(`${prefix}sending tier ${event.tier + 1} prompt (${event.wordCount} words, attempt ${event.attempt}/${event.maxAttempts})...`);
+    const workload = event.outputWords === 0 ? "exact OK" : `target ${event.outputWords} output words`;
+    write(`${prefix}sending tier ${event.tier + 1} prompt (${workload}, attempt ${event.attempt}/${event.maxAttempts})...`);
   } else if (event.phase === "verifying") {
     write(`${prefix}prompt completed; verifying 5h timer for ${formatDuration(event.delayMs)}...`);
   } else if (event.phase === "retrying") {
