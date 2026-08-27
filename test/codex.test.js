@@ -7,7 +7,7 @@ import { buildCodexArgs, parseCodexEvents, runCodex } from "../src/codex.js";
 import { DEFAULT_CONFIG } from "../src/constants.js";
 
 test("buildCodexArgs creates a minimal, ephemeral, read-only run", () => {
-  const args = buildCodexArgs(DEFAULT_CONFIG, "/tmp");
+  const args = buildCodexArgs({ ...DEFAULT_CONFIG, message: "production prompt" }, "/tmp");
 
   assert.deepEqual(args.slice(0, 5), [
     "exec",
@@ -19,7 +19,8 @@ test("buildCodexArgs creates a minimal, ephemeral, read-only run", () => {
   assert.ok(args.includes("read-only"));
   assert.ok(args.includes("--json"));
   assert.ok(args.includes('model_reasoning_effort="low"'));
-  assert.equal(args.at(-1), "Reply only: OK");
+  assert.equal(args.at(-1), "production prompt");
+  assert.equal("message" in DEFAULT_CONFIG, false);
 });
 
 test("parseCodexEvents extracts the final reply and conservative token total", () => {
@@ -80,7 +81,7 @@ printf '%s\\n' \\
   '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":8,"output_tokens":1}}'
 `, { mode: 0o700 });
 
-  const result = await runCodex({ ...DEFAULT_CONFIG, codexPath: executable });
+  const result = await runCodex({ ...DEFAULT_CONFIG, message: "production prompt", codexPath: executable });
 
   assert.equal(result.ok, true);
   assert.equal(result.reply, "OK");
@@ -98,7 +99,7 @@ printf '%s\\n' \\
 `, { mode: 0o700 });
 
   const result = await runCodex(
-    { ...DEFAULT_CONFIG, codexPath: executable },
+    { ...DEFAULT_CONFIG, message: "production prompt", codexPath: executable },
     { env: { ...process.env, CODEX_HOME: path.join(root, "isolated") } },
   );
 
