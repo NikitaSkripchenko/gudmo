@@ -12,7 +12,8 @@ const HELP = `gudmo - renew the Codex five-hour usage window
 
 Usage:
   gudmo run                  Renew and verify the 5h timer for every account
-  gudmo eval [--runs N]      Measure production prompt token usage
+  gudmo eval [--runs N] [--tier 1..5|all]
+                             Measure production prompt token usage
   gudmo doctor               Check platform, Codex CLI, and ChatGPT login
   gudmo help                 Show this help
   gudmo version              Show the installed version
@@ -48,15 +49,22 @@ export async function main(argv, { env = process.env, out = console.log, err = c
   if (command === "eval") {
     const json = args.includes("--json");
     const requestedRuns = readOption(args, "--runs") || "20";
-    rejectUnknown(removeOption(args.filter((arg) => arg !== "--json"), "--runs"), []);
+    const requestedTier = readOption(args, "--tier") || "1";
+    const remaining = removeOption(
+      removeOption(args.filter((arg) => arg !== "--json"), "--runs"),
+      "--tier",
+    );
+    rejectUnknown(remaining, []);
     const runs = Number.parseInt(requestedRuns, 10);
     if (!Number.isInteger(runs) || String(runs) !== requestedRuns || runs < 1 || runs > 100) {
       throw new Error("--runs must be an integer from 1 to 100");
     }
+    const tiers = parseEvalTiers(requestedTier);
     const config = await loadConfig(paths.config);
     const report = await runTokenEval({
       config,
       runs,
+      tiers,
       codexVersion: await readCodexVersion(config, { env }),
       runnerOptions: { env },
     });
@@ -163,4 +171,13 @@ function removeOption(args, name) {
 function rejectUnknown(args, allowed) {
   const unknown = args.filter((arg) => !allowed.includes(arg));
   if (unknown.length) throw new Error(`unknown option: ${unknown[0]}`);
+}
+
+function parseEvalTiers(value) {
+  if (value === "all") return [0, 1, 2, 3, 4];
+  const tier = Number.parseInt(value, 10);
+  if (!Number.isInteger(tier) || String(tier) !== value || tier < 1 || tier > 5) {
+    throw new Error("--tier must be an integer from 1 to 5 or all");
+  }
+  return [tier - 1];
 }

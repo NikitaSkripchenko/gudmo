@@ -1,10 +1,14 @@
-import { runCodex } from "./codex.js";
+import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { VERSION } from "./constants.js";
+import { runCodex } from "./codex.js";
+import { buildRenewalPrompt, PROMPT_WORD_COUNTS } from "./prompt.js";
 
 export async function runTokenEval({
   config,
   runs,
+  tiers = [0],
+  nonceFactory = crypto.randomUUID,
   runner = runCodex,
   runnerOptions,
   codexVersion = "unknown",
@@ -13,39 +17,57 @@ export async function runTokenEval({
   if (!Number.isInteger(runs) || runs < 1 || runs > 100) {
     throw new Error("runs must be an integer from 1 to 100");
   }
-  const samples = [];
-  for (let run = 0; run < runs; run += 1) {
-    samples.push(await runner(config, runnerOptions));
+  if (!Array.isArray(tiers) || tiers.length === 0 || tiers.some((tier) => (
+    !Number.isInteger(tier) || tier < 0 || tier >= PROMPT_WORD_COUNTS.length
+  ))) {
+    throw new Error(`tier indexes must be integers from 0 to ${PROMPT_WORD_COUNTS.length - 1}`);
   }
-  return buildTokenEval({
-    samples,
-    maxRequestsPer24Hours: config.maxRequestsPer24Hours,
+
+  const tierReports = [];
+  for (const tier of [...new Set(tiers)]) {
+    const samples = [];
+    let promptCharacters = 0;
+    for (let run = 0; run < runs; run += 1) {
+      const prompt = buildRenewalPrompt({ tier, nonce: nonceFactory({ tier, run }) });
+      promptCharacters = Math.max(promptCharacters, prompt.message.length);
+      samples.push(await runner({ ...config, message: prompt.message }, runnerOptions));
+    }
+    tierReports.push(buildTierReport({ tier, samples, promptCharacters }));
+  }
+
+  return {
+    metric: "prompt-tier-tokens",
+    result: tierReports.every((tier) => tier.result === "PASS") ? "PASS" : "FAIL",
     metadata: {
       model: config.model || "default",
       reasoningEffort: config.reasoningEffort,
       codexVersion,
       gudmoVersion: VERSION,
       evaluatedAt: new Date(clock()).toISOString(),
-      prompt: config.message,
     },
-  });
+    tiers: tierReports,
+  };
 }
 
 export function formatTokenEval(report) {
-  return [
-    "Gudmo Token Footprint Eval",
-    `Runs:                    ${report.runs}`,
-    `Measurable runs:         ${report.measurableRuns}/${report.runs}`,
-    `Exact minimal replies:   ${report.exactMinimalReplies}/${report.runs}`,
-    `Median tokens/request:   ${report.medianTokensPerRequest ?? "unavailable"}`,
-    `P95 tokens/request:      ${report.p95TokensPerRequest ?? "unavailable"}`,
-    `24h request ceiling:     ${report.maxRequestsPer24Hours}`,
-    `T24 upper estimate:      ${report.t24UpperEstimate === null ? "unavailable" : `${report.t24UpperEstimate} tokens`}`,
-    `Method:                  ${report.method}`,
+  const lines = [
+    "Gudmo Production Prompt Eval",
     `Codex:                   ${report.metadata.codexVersion}`,
     `Model/reasoning:         ${report.metadata.model} / ${report.metadata.reasoningEffort}`,
-    `Result:                  ${report.result}`,
-  ].join("\n");
+  ];
+  for (const tier of report.tiers) {
+    lines.push(
+      "",
+      `Tier ${tier.tier}: ${tier.wordCount} words`,
+      `Runs:                     ${tier.runs}`,
+      `Measurable runs:          ${tier.measurableRuns}/${tier.runs}`,
+      `Exact OK replies:         ${tier.exactReplies}/${tier.runs}`,
+      `Median tokens:            ${tier.medianTokens ?? "unavailable"}`,
+      `P95 tokens: ${tier.p95Tokens ?? "unavailable"}`,
+    );
+  }
+  lines.push("", `Result:                  ${report.result}`);
+  return lines.join("\n");
 }
 
 export async function readCodexVersion(config, { env = process.env } = {}) {
@@ -60,26 +82,21 @@ export async function readCodexVersion(config, { env = process.env } = {}) {
   });
 }
 
-export function buildTokenEval({ samples, maxRequestsPer24Hours, metadata }) {
+function buildTierReport({ tier, samples, promptCharacters }) {
   const measurable = samples.filter((sample) => sample.ok && Number.isFinite(sample.usage?.totalTokens));
   const totals = measurable.map((sample) => sample.usage.totalTokens);
-  const medianTokensPerRequest = percentile(totals, 50);
-  const p95TokensPerRequest = percentile(totals, 95);
-  const exactMinimalReplies = samples.filter((sample) => sample.ok && sample.minimalReply).length;
-  const passed = measurable.length === samples.length && exactMinimalReplies === samples.length;
-
+  const exactReplies = samples.filter((sample) => sample.ok && sample.minimalReply === true).length;
+  const passed = measurable.length === samples.length && exactReplies === samples.length;
   return {
-    metric: "T24",
-    method: "p95(input_tokens + output_tokens) × max requests per rolling 24 hours",
+    tier: tier + 1,
+    wordCount: PROMPT_WORD_COUNTS[tier],
+    promptCharacters,
     runs: samples.length,
     measurableRuns: measurable.length,
-    exactMinimalReplies,
-    medianTokensPerRequest,
-    p95TokensPerRequest,
-    maxRequestsPer24Hours,
-    t24UpperEstimate: p95TokensPerRequest === null ? null : p95TokensPerRequest * maxRequestsPer24Hours,
+    exactReplies,
+    medianTokens: percentile(totals, 50),
+    p95Tokens: percentile(totals, 95),
     result: passed ? "PASS" : "FAIL",
-    metadata,
     samples: samples.map((sample, index) => ({
       run: index + 1,
       ok: sample.ok,

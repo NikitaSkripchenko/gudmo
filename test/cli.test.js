@@ -87,3 +87,38 @@ test("removed commands and run options are rejected", async (t) => {
   }
   await assert.rejects(main(["run", "--window", "7d"], { env }), /unknown option/);
 });
+
+test("eval accepts a selected production prompt tier", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "gudmo-cli-eval-test-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "fake-codex");
+  await fs.writeFile(executable, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf 'codex-cli test\\n'
+  exit 0
+fi
+printf '%s\\n' \\
+  '{"type":"item.completed","item":{"type":"agent_message","text":"OK"}}' \\
+  '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":1}}'
+`, { mode: 0o700 });
+  await fs.writeFile(path.join(root, "config.json"), JSON.stringify({ codexPath: executable }));
+  const output = [];
+
+  const code = await main(["eval", "--runs", "1", "--tier", "3", "--json"], {
+    env: { GUDMO_HOME: root, HOME: root },
+    out: (line) => output.push(line),
+  });
+  const report = JSON.parse(output.join("\n"));
+
+  assert.equal(code, 0);
+  assert.deepEqual(report.tiers.map(({ tier }) => tier), [3]);
+  assert.equal(report.tiers[0].wordCount, 256);
+});
+
+test("eval rejects prompt tiers outside 1 through 5", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "gudmo-cli-tier-test-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const env = { GUDMO_HOME: root, HOME: root };
+  await assert.rejects(main(["eval", "--tier", "0"], { env }), /--tier/);
+  await assert.rejects(main(["eval", "--tier", "6"], { env }), /--tier/);
+});
