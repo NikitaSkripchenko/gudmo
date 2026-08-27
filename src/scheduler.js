@@ -98,6 +98,8 @@ export async function renewFiveHourWindow({
   clock = Date.now,
   nonceFactory = crypto.randomUUID,
   verificationDelayMs = 60_000,
+  verificationPollIntervalMs = 30_000,
+  verificationMaxWaitMs = 120_000,
   verificationWaiter = waitFor,
   retryWaiter = waitFor,
   lockRetryMs = 1_000,
@@ -188,6 +190,27 @@ export async function renewFiveHourWindow({
           checkedAt: after.fetchedAt,
           error: before.error || after.error,
         });
+
+        let propagationWaitedMs = 0;
+        while (verification.status === "still-floating"
+          && propagationWaitedMs < verificationMaxWaitMs) {
+          const delayMs = Math.min(
+            verificationPollIntervalMs,
+            verificationMaxWaitMs - propagationWaitedMs,
+          );
+          if (delayMs <= 0) break;
+          onProgress?.({ phase: "propagation-wait", attempt, tier, delayMs });
+          await verificationWaiter(delayMs);
+          propagationWaitedMs += delayMs;
+          after = await readSnapshot(verifier, config, verifierOptions, clock);
+          verification = buildFiveHourVerification({
+            beforeWindows: before.windows,
+            afterWindows: after.windows,
+            beforeCheckedAt: before.fetchedAt,
+            checkedAt: after.fetchedAt,
+            error: before.error || after.error,
+          });
+        }
 
         if (verification.status === "unavailable") {
           onProgress?.({ phase: "metadata-retry", attempt, tier, delayMs: config.retrySeconds * 1_000 });

@@ -62,7 +62,7 @@ export function formatTokenEval(report) {
   for (const tier of report.tiers) {
     lines.push(
       "",
-      `Tier ${tier.tier}: ${tier.outputWords === 0 ? "exact OK" : `${tier.outputWords} output words / ${tier.reasoningEffort} reasoning`}`,
+      `Tier ${tier.tier}: ${tier.outputWords} output words / ${tier.reasoningEffort} reasoning`,
       `Runs:                     ${tier.runs}`,
       `Measurable runs:          ${tier.measurableRuns}/${tier.runs}`,
       `Valid replies:            ${tier.validReplies}/${tier.runs}`,
@@ -90,10 +90,9 @@ function buildTierReport({ tier, samples, promptCharacters }) {
   const definition = PROMPT_TIERS[tier];
   const measurable = samples.filter((sample) => sample.ok && Number.isFinite(sample.usage?.totalTokens));
   const totals = measurable.map((sample) => sample.usage.totalTokens);
-  const validReplies = samples.filter((sample) => definition.outputWords === 0
-    ? sample.ok && sample.minimalReply === true
-    : sample.ok && Number.isFinite(sample.usage?.outputTokens)
-      && sample.usage.outputTokens >= definition.outputWords).length;
+  const validReplies = samples.filter((sample) => sample.ok
+    && Number.isFinite(sample.usage?.outputTokens)
+    && sample.usage.outputTokens >= definition.outputWords).length;
   const passed = measurable.length === samples.length && validReplies === samples.length;
   return {
     tier: tier + 1,

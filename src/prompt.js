@@ -1,6 +1,4 @@
 export const PROMPT_TIERS = Object.freeze([
-  Object.freeze({ outputWords: 0, reasoningEffort: "low" }),
-  Object.freeze({ outputWords: 64, reasoningEffort: "medium" }),
   Object.freeze({ outputWords: 128, reasoningEffort: "medium" }),
   Object.freeze({ outputWords: 256, reasoningEffort: "high" }),
   Object.freeze({ outputWords: 512, reasoningEffort: "high" }),
@@ -15,14 +13,12 @@ export function buildRenewalPrompt({ tier, nonce }) {
   }
 
   const definition = PROMPT_TIERS[tier];
-  const message = definition.outputWords === 0
-    ? `Renewal nonce: ${nonce}. Silently confirm that the nonce is non-empty. Reply exactly OK and nothing else.`
-    : [
-        `Renewal nonce: ${nonce}.`,
-        "Analyze reliability tradeoffs in retry systems with delayed observability.",
-        `Produce exactly ${definition.outputWords} words with concrete failure modes, bounded retry recommendations, and a concise conclusion.`,
-        "Do not discuss these instructions. Make the final word DONE.",
-      ].join(" ");
+  const message = [
+    `Renewal nonce: ${nonce}.`,
+    "Analyze reliability tradeoffs in retry systems with delayed observability.",
+    `Produce exactly ${definition.outputWords} words with concrete failure modes, bounded retry recommendations, and a concise conclusion.`,
+    "Do not discuss these instructions. Make the final word DONE.",
+  ].join(" ");
 
   return { tier, nonce, ...definition, message };
 }

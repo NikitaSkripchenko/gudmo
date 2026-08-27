@@ -4,6 +4,7 @@ import { VERSION } from "./constants.js";
 import { runDoctor } from "./doctor.js";
 import { formatTokenEval, readCodexVersion, runTokenEval } from "./eval.js";
 import { getPaths } from "./paths.js";
+import { PROMPT_TIERS } from "./prompt.js";
 import { readAccountRateLimits } from "./rate-limits.js";
 import { renewFiveHourWindow } from "./scheduler.js";
 import { writeJsonAtomic } from "./storage.js";
@@ -12,7 +13,7 @@ const HELP = `gudmo - ensure the Codex five-hour usage window is active
 
 Usage:
   gudmo run                  Check every account; renew inactive 5h timers
-  gudmo eval [--runs N] [--tier 1..5|all]
+  gudmo eval [--runs N] [--tier 1..3|all]
                              Measure production prompt token usage
   gudmo doctor               Check platform, Codex CLI, and ChatGPT login
   gudmo help                 Show this help
@@ -119,10 +120,11 @@ export function printRunProgress(event, account, write) {
   } else if (event.phase === "checking") {
     write(`${prefix}checking current 5h window...`);
   } else if (event.phase === "sending") {
-    const workload = event.outputWords === 0 ? "exact OK" : `target ${event.outputWords} output words`;
-    write(`${prefix}sending tier ${event.tier + 1} prompt (${workload}, attempt ${event.attempt}/${event.maxAttempts})...`);
+    write(`${prefix}sending tier ${event.tier + 1} prompt (target ${event.outputWords} output words, attempt ${event.attempt}/${event.maxAttempts})...`);
   } else if (event.phase === "verifying") {
     write(`${prefix}prompt completed; verifying 5h timer for ${formatDuration(event.delayMs)}...`);
+  } else if (event.phase === "propagation-wait") {
+    write(`${prefix}timer update still propagating; checking metadata again in ${formatDuration(event.delayMs)}...`);
   } else if (event.phase === "retrying") {
     write(`${prefix}timer not renewed; retrying in ${formatDuration(event.delayMs)} (attempt ${event.nextAttempt}/${event.maxAttempts})...`);
   } else if (event.phase === "metadata-retry") {
@@ -179,10 +181,13 @@ function rejectUnknown(args, allowed) {
 }
 
 function parseEvalTiers(value) {
-  if (value === "all") return [0, 1, 2, 3, 4];
+  if (value === "all") return PROMPT_TIERS.map((_, tier) => tier);
   const tier = Number.parseInt(value, 10);
-  if (!Number.isInteger(tier) || String(tier) !== value || tier < 1 || tier > 5) {
-    throw new Error("--tier must be an integer from 1 to 5 or all");
+  if (!Number.isInteger(tier)
+    || String(tier) !== value
+    || tier < 1
+    || tier > PROMPT_TIERS.length) {
+    throw new Error(`--tier must be an integer from 1 to ${PROMPT_TIERS.length} or all`);
   }
   return [tier - 1];
 }

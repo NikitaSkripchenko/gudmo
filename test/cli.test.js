@@ -76,15 +76,17 @@ test("manual run progress names account, prompt tier, and waits", () => {
   const output = [];
   const write = (line) => output.push(line);
   printRunProgress({ phase: "lock-wait", maxWaitMs: 120_000 }, "work", write);
-  printRunProgress({ phase: "sending", attempt: 2, maxAttempts: 5, tier: 1, outputWords: 64 }, "work", write);
+  printRunProgress({ phase: "sending", attempt: 1, maxAttempts: 3, tier: 0, outputWords: 128 }, "work", write);
   printRunProgress({ phase: "verifying", delayMs: 60_000 }, "work", write);
-  printRunProgress({ phase: "retrying", delayMs: 60_000, nextAttempt: 3, maxAttempts: 5 }, "work", write);
+  printRunProgress({ phase: "propagation-wait", delayMs: 30_000 }, "work", write);
+  printRunProgress({ phase: "retrying", delayMs: 60_000, nextAttempt: 2, maxAttempts: 3 }, "work", write);
 
   assert.deepEqual(output, [
     "work: waiting for an existing renewal (up to 2m)...",
-    "work: sending tier 2 prompt (target 64 output words, attempt 2/5)...",
+    "work: sending tier 1 prompt (target 128 output words, attempt 1/3)...",
     "work: prompt completed; verifying 5h timer for 1m...",
-    "work: timer not renewed; retrying in 1m (attempt 3/5)...",
+    "work: timer update still propagating; checking metadata again in 30s...",
+    "work: timer not renewed; retrying in 1m (attempt 2/3)...",
   ]);
 });
 
@@ -119,7 +121,7 @@ if [ "$1" = "--version" ]; then
 fi
 printf '%s\\n' \\
   '{"type":"item.completed","item":{"type":"agent_message","text":"DONE"}}' \\
-  '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":200}}'
+  '{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":0,"output_tokens":600}}'
 `, { mode: 0o700 });
   await fs.writeFile(path.join(root, "config.json"), JSON.stringify({ codexPath: executable }));
   const output = [];
@@ -132,13 +134,13 @@ printf '%s\\n' \\
 
   assert.equal(code, 0);
   assert.deepEqual(report.tiers.map(({ tier }) => tier), [3]);
-  assert.equal(report.tiers[0].outputWords, 128);
+  assert.equal(report.tiers[0].outputWords, 512);
 });
 
-test("eval rejects prompt tiers outside 1 through 5", async (t) => {
+test("eval rejects prompt tiers outside 1 through 3", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "gudmo-cli-tier-test-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const env = { GUDMO_HOME: root, HOME: root };
   await assert.rejects(main(["eval", "--tier", "0"], { env }), /--tier/);
-  await assert.rejects(main(["eval", "--tier", "6"], { env }), /--tier/);
+  await assert.rejects(main(["eval", "--tier", "4"], { env }), /--tier/);
 });

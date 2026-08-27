@@ -41,7 +41,7 @@ The flow for each account is:
 6. Read the five-hour window again.
 7. Succeed when the reset is fixed or changed in a way that demonstrates the timer was anchored.
 8. If the reset continues sliding with wall-clock time, retry with the next workload tier.
-9. Stop after five attempts and fail that account if renewal is still unverified.
+9. Stop after three attempts and fail that account if renewal is still unverified.
 
 Accounts run concurrently so one slow account does not serialize the full command. Results remain ordered according to account discovery. The overall command exits with code 0 only when every account succeeds.
 
@@ -54,9 +54,9 @@ Every tier contains:
 - A fresh random nonce.
 - A bounded task with explicit output expectations.
 
-The first tier is deliberately modest: low reasoning and an exact `OK` reply. Retries escalate generated work and reasoning effort: 64 and 128 output words at medium reasoning, then 256 and 512 words at high reasoning. Prompt construction is a pure function so nonce placement, workload, reasoning effort, and response contracts are unit-testable.
+The first tier uses the live-verified 128-word/medium-reasoning workload. If the first verification read still floats, Gudmo polls metadata for up to two additional minutes before allowing another model call. Retries remain bounded at 256 and 512 output words with high reasoning. Prompt construction is a pure function so nonce placement, workload, reasoning effort, and response contracts are unit-testable.
 
-Live calibration established why both dimensions matter. A 1,024-word input prompt with an `OK`-only response left one Plus account's timer floating, as did a low-reasoning request that generated 766 output tokens. A high-reasoning request generating 2,444 output tokens moved that account from 0% to 1% and anchored the five-hour reset. The final production tier matches that successful bounded workload.
+Live calibration established why both workload and propagation time matter. Exact `OK`/low and 64 words/medium were still floating at their first verification reads. One 64-word attempt became active later, proving the server can apply renewal after Gudmo has already declared failure. A 128-word/medium request renewed the remaining floating account with 1,110 output tokens; production starts with that observed working profile and polls delayed metadata before escalating.
 
 The initial tier sizes and escalation curve are implementation constants, not user configuration. Live end-to-end results may justify tuning them before completion. The final values must be recorded in tests and the README.
 

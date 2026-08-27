@@ -111,7 +111,7 @@ test("a later invocation skips the still-active window", async (t) => {
   assert.equal(sends, 1);
 });
 
-test("a floating timer escalates to a larger production prompt", async (t) => {
+test("a persistent floating timer escalates to the next prompt", async (t) => {
   const paths = await setup(t);
   let now = START;
   const configs = [];
@@ -120,6 +120,7 @@ test("a floating timer escalates to a larger production prompt", async (t) => {
     clock: () => now,
     nonceFactory: () => `nonce-${configs.length}`,
     verificationDelayMs: MINUTE,
+    verificationMaxWaitMs: 0,
     verificationWaiter: async (delay) => { now += delay; },
     retryWaiter: async () => {},
     runner: async (config) => { configs.push(config); return successfulCodexResult(); },
@@ -128,12 +129,34 @@ test("a floating timer escalates to a larger production prompt", async (t) => {
   assert.equal(result.status, "renewed");
   assert.equal(result.attempts, 2);
   assert.equal(result.tier, 1);
-  assert.equal(configs[0].reasoningEffort, "low");
-  assert.equal(configs[1].reasoningEffort, "medium");
-  assert.match(configs[1].message, /exactly 64 words/);
+  assert.equal(configs[0].reasoningEffort, "medium");
+  assert.match(configs[0].message, /exactly 128 words/);
+  assert.equal(configs[1].reasoningEffort, "high");
+  assert.match(configs[1].message, /exactly 256 words/);
 });
 
-test("five floating results exhaust all prompt tiers", async (t) => {
+test("delayed renewal is accepted without sending a second prompt", async (t) => {
+  const paths = await setup(t);
+  let now = START;
+  let sends = 0;
+  const result = await renewFiveHourWindow({
+    paths,
+    clock: () => now,
+    nonceFactory: () => `nonce-${sends}`,
+    verificationDelayMs: MINUTE,
+    verificationPollIntervalMs: 30_000,
+    verificationMaxWaitMs: 60_000,
+    verificationWaiter: async (delay) => { now += delay; },
+    retryWaiter: async () => {},
+    runner: async () => { sends += 1; return successfulCodexResult(); },
+    verifier: floatingThenAnchoredReader(() => now, 1),
+  });
+  assert.equal(result.status, "renewed");
+  assert.equal(result.attempts, 1);
+  assert.equal(sends, 1);
+});
+
+test("three floating results exhaust all prompt tiers", async (t) => {
   const paths = await setup(t);
   let now = START;
   let sends = 0;
@@ -148,9 +171,9 @@ test("five floating results exhaust all prompt tiers", async (t) => {
     verifier: floatingReader(() => now),
   });
   assert.equal(result.status, "failed");
-  assert.equal(result.attempts, 5);
-  assert.equal(result.tier, 4);
-  assert.equal(sends, 5);
+  assert.equal(result.attempts, 3);
+  assert.equal(result.tier, 2);
+  assert.equal(sends, 3);
 });
 
 test("unavailable metadata gets one verification-only retry", async (t) => {
