@@ -192,6 +192,10 @@ export async function renewFiveHourWindow({
         });
 
         let propagationWaitedMs = 0;
+        let propagationPoll = 0;
+        const maxPropagationPolls = verificationPollIntervalMs > 0
+          ? Math.ceil(verificationMaxWaitMs / verificationPollIntervalMs)
+          : 0;
         while (verification.status === "still-floating"
           && propagationWaitedMs < verificationMaxWaitMs) {
           const delayMs = Math.min(
@@ -199,7 +203,15 @@ export async function renewFiveHourWindow({
             verificationMaxWaitMs - propagationWaitedMs,
           );
           if (delayMs <= 0) break;
-          onProgress?.({ phase: "propagation-wait", attempt, tier, delayMs });
+          propagationPoll += 1;
+          onProgress?.({
+            phase: "propagation-wait",
+            attempt,
+            tier,
+            delayMs,
+            poll: propagationPoll,
+            maxPolls: maxPropagationPolls,
+          });
           await verificationWaiter(delayMs);
           propagationWaitedMs += delayMs;
           after = await readSnapshot(verifier, config, verifierOptions, clock);

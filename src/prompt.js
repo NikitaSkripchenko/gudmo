@@ -1,5 +1,4 @@
 export const PROMPT_TIERS = Object.freeze([
-  Object.freeze({ outputWords: 128, reasoningEffort: "medium" }),
   Object.freeze({ outputWords: 256, reasoningEffort: "high" }),
   Object.freeze({ outputWords: 512, reasoningEffort: "high" }),
 ]);

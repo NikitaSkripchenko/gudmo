@@ -14,7 +14,7 @@ test("eval builds every call through the production prompt builder", async () =>
   const report = await runTokenEval({
     config: DEFAULT_CONFIG,
     runs: 2,
-    tiers: [0, 2],
+    tiers: [0, 1],
     nonceFactory: ({ tier, run }) => `nonce-${tier}-${run}`,
     codexVersion: "codex-cli test",
     clock: () => Date.parse("2026-08-27T12:00:00.000Z"),
@@ -22,18 +22,18 @@ test("eval builds every call through the production prompt builder", async () =>
       messages.push(config.message);
       return config.message.includes("exactly 512 words")
         ? sample(1_000 + messages.length, false, 600)
-        : sample(500 + messages.length, false, 200);
+        : sample(700 + messages.length, false, 300);
     },
   });
 
   assert.equal(messages.length, 4);
   assert.match(messages[0], /nonce-0-0/);
-  assert.match(messages[0], /exactly 128 words/);
-  assert.match(messages[2], /nonce-2-0/);
+  assert.match(messages[0], /exactly 256 words/);
+  assert.match(messages[2], /nonce-1-0/);
   assert.match(messages[2], /exactly 512 words/);
-  assert.deepEqual(report.tiers.map(({ tier }) => tier), [1, 3]);
-  assert.deepEqual(report.tiers.map(({ outputWords }) => outputWords), [128, 512]);
-  assert.equal(report.tiers[0].p95Tokens, 502);
+  assert.deepEqual(report.tiers.map(({ tier }) => tier), [1, 2]);
+  assert.deepEqual(report.tiers.map(({ outputWords }) => outputWords), [256, 512]);
+  assert.equal(report.tiers[0].p95Tokens, 702);
   assert.equal(report.result, "PASS");
   assert.equal(report.metadata.codexVersion, "codex-cli test");
 });
@@ -48,7 +48,7 @@ test("eval fails when telemetry or bounded output is missing", async () => {
     runner: async () => {
       calls += 1;
       return calls === 1
-        ? sample(500, false, 200)
+        ? sample(700, false, 300)
         : { ok: true, minimalReply: false, usage: null };
     },
   });
@@ -60,7 +60,7 @@ test("eval fails when telemetry or bounded output is missing", async () => {
 
 test("eval validates run counts and tier indexes", async () => {
   await assert.rejects(runTokenEval({ config: DEFAULT_CONFIG, runs: 0 }), /runs/);
-  await assert.rejects(runTokenEval({ config: DEFAULT_CONFIG, runs: 1, tiers: [3] }), /tier/);
+  await assert.rejects(runTokenEval({ config: DEFAULT_CONFIG, runs: 1, tiers: [2] }), /tier/);
 });
 
 test("formatted eval reports per-tier token measurements", async () => {
@@ -70,12 +70,12 @@ test("formatted eval reports per-tier token measurements", async () => {
     tiers: [0],
     nonceFactory: () => "nonce",
     codexVersion: "codex-cli test",
-    runner: async () => sample(500, false, 200),
+    runner: async () => sample(700, false, 300),
   });
   const formatted = formatTokenEval(report);
   assert.match(formatted, /Production Prompt Eval/);
-  assert.match(formatted, /Tier 1: 128 output words \/ medium reasoning/);
-  assert.match(formatted, /P95 tokens: 500/);
+  assert.match(formatted, /Tier 1: 256 output words \/ high reasoning/);
+  assert.match(formatted, /P95 tokens: 700/);
   assert.match(formatted, /Result:\s+PASS/);
 });
 

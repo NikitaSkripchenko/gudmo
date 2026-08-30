@@ -13,7 +13,7 @@ const HELP = `gudmo - ensure the Codex five-hour usage window is active
 
 Usage:
   gudmo run                  Check every account; renew inactive 5h timers
-  gudmo eval [--runs N] [--tier 1..3|all]
+  gudmo eval [--runs N] [--tier 1..2|all]
                              Measure production prompt token usage
   gudmo doctor               Check platform, Codex CLI, and ChatGPT login
   gudmo help                 Show this help
@@ -124,7 +124,7 @@ export function printRunProgress(event, account, write) {
   } else if (event.phase === "verifying") {
     write(`${prefix}prompt completed; verifying 5h timer for ${formatDuration(event.delayMs)}...`);
   } else if (event.phase === "propagation-wait") {
-    write(`${prefix}timer update still propagating; checking metadata again in ${formatDuration(event.delayMs)}...`);
+    write(`${prefix}timer update still propagating; metadata poll ${event.poll}/${event.maxPolls} in ${formatDuration(event.delayMs)}...`);
   } else if (event.phase === "retrying") {
     write(`${prefix}timer not renewed; retrying in ${formatDuration(event.delayMs)} (attempt ${event.nextAttempt}/${event.maxAttempts})...`);
   } else if (event.phase === "metadata-retry") {

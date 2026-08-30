@@ -129,16 +129,17 @@ test("a persistent floating timer escalates to the next prompt", async (t) => {
   assert.equal(result.status, "renewed");
   assert.equal(result.attempts, 2);
   assert.equal(result.tier, 1);
-  assert.equal(configs[0].reasoningEffort, "medium");
-  assert.match(configs[0].message, /exactly 128 words/);
+  assert.equal(configs[0].reasoningEffort, "high");
+  assert.match(configs[0].message, /exactly 256 words/);
   assert.equal(configs[1].reasoningEffort, "high");
-  assert.match(configs[1].message, /exactly 256 words/);
+  assert.match(configs[1].message, /exactly 512 words/);
 });
 
 test("delayed renewal is accepted without sending a second prompt", async (t) => {
   const paths = await setup(t);
   let now = START;
   let sends = 0;
+  const progress = [];
   const result = await renewFiveHourWindow({
     paths,
     clock: () => now,
@@ -148,15 +149,20 @@ test("delayed renewal is accepted without sending a second prompt", async (t) =>
     verificationMaxWaitMs: 60_000,
     verificationWaiter: async (delay) => { now += delay; },
     retryWaiter: async () => {},
+    onProgress: (event) => progress.push(event),
     runner: async () => { sends += 1; return successfulCodexResult(); },
     verifier: floatingThenAnchoredReader(() => now, 1),
   });
   assert.equal(result.status, "renewed");
   assert.equal(result.attempts, 1);
   assert.equal(sends, 1);
+  assert.deepEqual(progress.filter(({ phase }) => phase === "propagation-wait"), [
+    { phase: "propagation-wait", attempt: 1, tier: 0, delayMs: 30_000, poll: 1, maxPolls: 2 },
+    { phase: "propagation-wait", attempt: 1, tier: 0, delayMs: 30_000, poll: 2, maxPolls: 2 },
+  ]);
 });
 
-test("three floating results exhaust all prompt tiers", async (t) => {
+test("two floating results exhaust all prompt tiers", async (t) => {
   const paths = await setup(t);
   let now = START;
   let sends = 0;
@@ -171,9 +177,9 @@ test("three floating results exhaust all prompt tiers", async (t) => {
     verifier: floatingReader(() => now),
   });
   assert.equal(result.status, "failed");
-  assert.equal(result.attempts, 3);
-  assert.equal(result.tier, 2);
-  assert.equal(sends, 3);
+  assert.equal(result.attempts, 2);
+  assert.equal(result.tier, 1);
+  assert.equal(sends, 2);
 });
 
 test("unavailable metadata gets one verification-only retry", async (t) => {

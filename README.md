@@ -30,15 +30,15 @@ For each account, Gudmo:
 
 1. Reads the current 300-minute Codex window.
 2. Stops successfully without a model call when the reset is less than five hours away.
-3. Otherwise sends a nonce-bearing 128-word prompt with medium reasoning, the first profile observed to renew the remaining floating live account in the latest calibration.
+3. Otherwise sends a nonce-bearing 256-word prompt with high reasoning, the first profile observed to renew the problematic live account in the latest calibration.
 4. Waits 60 seconds and reads the window again.
 5. If the first read still floats, polls metadata for up to two more minutes without sending another model prompt.
 6. Succeeds only when the reset stops sliding with wall time.
-7. If the full propagation grace period expires, retries with 256 and 512 output words at high reasoning.
+7. If the full propagation grace period expires, retries once with 512 output words at high reasoning.
 
 Accounts run concurrently and print account-prefixed progress. The process exits with code 0 when every account is either already active or verifies renewal. Missing metadata, malformed telemetry, exhausted prompt tiers, or any account failure produces a nonzero exit.
 
-The first prompt uses the 128-word/medium-reasoning workload that renewed the remaining floating account during live calibration. This is an observed working profile, not a claim that it is the theoretical service minimum. A fresh nonce prevents the request from being fully reusable as a cached prompt. Gudmo no longer starts with exact `OK`, and delayed metadata is polled before another prompt is allowed.
+The first prompt uses the 256-word/high-reasoning workload that renewed the problematic account during live calibration. The preceding 128-word/medium request consumed 14,942 tokens but left that account floating. This is an observed working profile, not a claim that it is the theoretical service minimum. A fresh nonce prevents the request from being fully reusable as a cached prompt, and delayed metadata is polled before the single fallback is allowed.
 
 ## Internal prompt evaluation
 
@@ -57,7 +57,7 @@ The default is tier 1. Each tier report includes target output, reasoning effort
 
 ```text
 gudmo run                         Renew every account's 5h timer
-gudmo eval [--runs N] [--tier 1..3|all] [--json]
+gudmo eval [--runs N] [--tier 1..2|all] [--json]
                                   Measure production prompt tiers
 gudmo doctor                      Check Codex and credentials
 gudmo help                        Show help
@@ -103,7 +103,7 @@ Gudmo compares the five-hour reset timestamp before and after a real prompt:
 - `renewed`: the reset is fixed, usage increased, or reset movement differs from wall-clock drift.
 - `still-floating`: the reset advanced by approximately the observation interval; Gudmo escalates the prompt.
 - `unavailable`: comparable 300-minute metadata is missing; Gudmo performs one metadata-only retry, then fails without claiming success.
-- `failed`: the Codex call failed or all three tiers left the timer floating after propagation polling.
+- `failed`: the Codex call failed or both tiers left the timer floating after propagation polling.
 
 This is observable evidence from experimental metadata, not a service-level guarantee from OpenAI.
 
