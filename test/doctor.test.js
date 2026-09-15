@@ -40,3 +40,74 @@ test("doctor accepts valid isolated account snapshots", async (t) => {
 
   assert.equal(result.checks.find(({ name }) => name === "authentication").ok, true);
 });
+
+test("doctor verifies the Claude CLI and its subscription login", async () => {
+  const calls = [];
+  const result = await runDoctor(DEFAULT_CONFIG, {
+    platform: "darwin",
+    accounts: [],
+    providers: ["claude"],
+    runner: async (command, args) => {
+      calls.push([command, ...args]);
+      return {
+        ok: true,
+        output: args[0] === "--version"
+          ? "2.1.270 (Claude Code)"
+          : JSON.stringify({ result: "You are currently using your subscription to power your Claude Code usage" }),
+        error: null,
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.checks.map(({ name }) => name), [
+    "platform",
+    "node",
+    "claude",
+    "claude-authentication",
+  ]);
+  assert.equal(calls.every(([command]) => command === DEFAULT_CONFIG.claudePath), true);
+  assert.ok(calls.at(-1).includes("/usage"));
+});
+
+test("doctor fails Claude authentication without subscription usage", async () => {
+  const result = await runDoctor(DEFAULT_CONFIG, {
+    platform: "darwin",
+    accounts: [],
+    providers: ["claude"],
+    runner: async (_command, args) => ({
+      ok: true,
+      output: args[0] === "--version"
+        ? "2.1.270 (Claude Code)"
+        : JSON.stringify({ result: "Using the Anthropic API with an API key" }),
+      error: null,
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.checks.find(({ name }) => name === "claude-authentication").detail, /subscription login is required/);
+});
+
+test("doctor checks both providers when both are selected", async () => {
+  const result = await runDoctor(DEFAULT_CONFIG, {
+    platform: "darwin",
+    accounts: [],
+    providers: ["codex", "claude"],
+    runner: async (_command, args) => ({
+      ok: true,
+      output: args[0] === "--version"
+        ? "cli test"
+        : "Logged in using ChatGPT; using your subscription",
+      error: null,
+    }),
+  });
+
+  assert.deepEqual(result.checks.map(({ name }) => name), [
+    "platform",
+    "node",
+    "claude",
+    "claude-authentication",
+    "codex",
+    "authentication",
+  ]);
+});

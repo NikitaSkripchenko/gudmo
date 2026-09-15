@@ -4,23 +4,25 @@ import { VERSION } from "./constants.js";
 import { runDoctor } from "./doctor.js";
 import { formatTokenEval, readCodexVersion, runTokenEval } from "./eval.js";
 import { getPaths } from "./paths.js";
-import { PROMPT_TIERS } from "./prompt.js";
-import { readAccountRateLimits } from "./rate-limits.js";
+import { getProvider, parseProviderSelection } from "./providers.js";
 import { renewFiveHourWindow } from "./scheduler.js";
 import { writeJsonAtomic } from "./storage.js";
 
 const HELP = `gudmo - ensure the Codex five-hour usage window is active
 
 Usage:
-  gudmo run                  Check every account; renew inactive 5h timers
-  gudmo eval [--runs N] [--tier 1..2|all]
+  gudmo run [--provider codex|claude|all]
+                             Check every account; renew inactive 5h timers
+  gudmo eval [--runs N] [--tier 1..N|all] [--provider codex|claude]
                              Measure production prompt token usage
-  gudmo doctor               Check platform, Codex CLI, and ChatGPT login
+  gudmo doctor [--provider codex|claude|all]
+                             Check platform, provider CLIs, and login
   gudmo help                 Show this help
   gudmo version              Show the installed version
 
 Every run checks all discovered accounts using isolated credentials.
 Active timers are skipped; inactive timers must be verified renewed.
+--provider defaults to all; each provider is renewed independently.
 `;
 
 export async function main(argv, { env = process.env, out = console.log, err = console.error } = {}) {
@@ -40,33 +42,40 @@ export async function main(argv, { env = process.env, out = console.log, err = c
   await ensureConfig(paths.config);
 
   if (command === "doctor") {
-    rejectUnknown(args, []);
-    const accounts = await discoverAccounts({ paths, env });
-    const result = await runDoctor(await loadConfig(paths.config), { accounts });
+    const providers = readProviderOption(args, "all");
+    rejectUnknown(removeOption(args, "--provider"), []);
+    const accounts = await discoverAccounts({ paths, env, providers });
+    const result = await runDoctor(await loadConfig(paths.config), { accounts, providers });
     for (const check of result.checks) out(`${check.ok ? "PASS" : "FAIL"} ${check.name}: ${check.detail}`);
     return result.ok ? 0 : 1;
   }
 
   if (command === "eval") {
     const json = args.includes("--json");
+    const [providerId] = readProviderOption(args, "codex");
+    const provider = getProvider(providerId);
     const requestedRuns = readOption(args, "--runs") || "20";
     const requestedTier = readOption(args, "--tier") || "1";
     const remaining = removeOption(
-      removeOption(args.filter((arg) => arg !== "--json"), "--runs"),
-      "--tier",
+      removeOption(
+        removeOption(args.filter((arg) => arg !== "--json"), "--runs"),
+        "--tier",
+      ),
+      "--provider",
     );
     rejectUnknown(remaining, []);
     const runs = Number.parseInt(requestedRuns, 10);
     if (!Number.isInteger(runs) || String(runs) !== requestedRuns || runs < 1 || runs > 100) {
       throw new Error("--runs must be an integer from 1 to 100");
     }
-    const tiers = parseEvalTiers(requestedTier);
+    const tiers = parseEvalTiers(requestedTier, provider);
     const config = await loadConfig(paths.config);
     const report = await runTokenEval({
       config,
       runs,
       tiers,
-      codexVersion: await readCodexVersion(config, { env }),
+      provider,
+      codexVersion: await readCodexVersion(config, { env, provider }),
       runnerOptions: { env },
     });
     await writeJsonAtomic(paths.evalReport, report);
@@ -75,15 +84,21 @@ export async function main(argv, { env = process.env, out = console.log, err = c
   }
 
   if (command === "run") {
-    rejectUnknown(args, []);
-    const accounts = await discoverAccounts({ paths, env });
+    const providers = readProviderOption(args, "all");
+    rejectUnknown(removeOption(args, "--provider"), []);
+    const accounts = await discoverAccounts({ paths, env, providers });
     return runForAccountsParallel(accounts, async (discoveredAccount) => {
       const account = await prepareAccount(discoveredAccount);
+      const provider = getProvider(account.provider);
       return renewFiveHourWindow({
         paths: account.paths,
-        runnerOptions: { env: account.codexEnv, account },
-        verifier: readAccountRateLimits,
-        verifierOptions: { env: account.codexEnv, account },
+        runner: provider.runner,
+        runnerOptions: { env: account.providerEnv, account },
+        verifier: provider.verifier,
+        verifierOptions: { env: account.providerEnv, account },
+        tiers: provider.tiers,
+        buildPrompt: provider.buildPrompt,
+        verify: provider.verify,
         onProgress: (event) => printRunProgress(event, account.label, out),
       });
     }, out, err);
@@ -180,14 +195,19 @@ function rejectUnknown(args, allowed) {
   if (unknown.length) throw new Error(`unknown option: ${unknown[0]}`);
 }
 
-function parseEvalTiers(value) {
-  if (value === "all") return PROMPT_TIERS.map((_, tier) => tier);
+function parseEvalTiers(value, provider) {
+  if (value === "all") return provider.tiers.map((_, tier) => tier);
   const tier = Number.parseInt(value, 10);
   if (!Number.isInteger(tier)
     || String(tier) !== value
     || tier < 1
-    || tier > PROMPT_TIERS.length) {
-    throw new Error(`--tier must be an integer from 1 to ${PROMPT_TIERS.length} or all`);
+    || tier > provider.tiers.length) {
+    throw new Error(`--tier must be an integer from 1 to ${provider.tiers.length} or all`);
   }
   return [tier - 1];
+}
+
+function readProviderOption(args, fallback) {
+  const requested = readOption(args, "--provider") || fallback;
+  return parseProviderSelection(requested);
 }

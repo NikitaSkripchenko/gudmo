@@ -6,5 +6,7 @@ export const DEFAULT_CONFIG = Object.freeze({
   timeoutSeconds: 120,
   reasoningEffort: "low",
   model: null,
+  claudeModel: null,
   codexPath: "codex",
+  claudePath: "claude",
 });

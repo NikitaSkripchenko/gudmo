@@ -3,15 +3,14 @@ export const PROMPT_TIERS = Object.freeze([
   Object.freeze({ outputWords: 512, reasoningEffort: "high" }),
 ]);
 
-export function buildRenewalPrompt({ tier, nonce }) {
-  if (!Number.isInteger(tier) || tier < 0 || tier >= PROMPT_TIERS.length) {
-    throw new Error(`prompt tier must be an integer from 0 to ${PROMPT_TIERS.length - 1}`);
-  }
-  if (typeof nonce !== "string" || nonce.length === 0) {
-    throw new Error("prompt nonce must be a non-empty string");
-  }
+// Claude anchors its five-hour window on the first request of the window, so a
+// single minimal turn is enough. There is no floating reset to out-work.
+export const CLAUDE_PROMPT_TIERS = Object.freeze([
+  Object.freeze({ outputWords: 1, reasoningEffort: null }),
+]);
 
-  const definition = PROMPT_TIERS[tier];
+export function buildRenewalPrompt({ tier, nonce, tiers = PROMPT_TIERS }) {
+  const definition = selectTier({ tier, nonce, tiers });
   const message = [
     `Renewal nonce: ${nonce}.`,
     "Analyze reliability tradeoffs in retry systems with delayed observability.",
@@ -20,4 +19,25 @@ export function buildRenewalPrompt({ tier, nonce }) {
   ].join(" ");
 
   return { tier, nonce, ...definition, message };
+}
+
+export function buildClaudeRenewalPrompt({ tier, nonce, tiers = CLAUDE_PROMPT_TIERS }) {
+  const definition = selectTier({ tier, nonce, tiers });
+  const message = [
+    `Renewal nonce: ${nonce}.`,
+    "Do not use any tools and do not explain anything.",
+    "Reply with exactly one word: DONE.",
+  ].join(" ");
+
+  return { tier, nonce, ...definition, message };
+}
+
+function selectTier({ tier, nonce, tiers }) {
+  if (!Number.isInteger(tier) || tier < 0 || tier >= tiers.length) {
+    throw new Error(`prompt tier must be an integer from 0 to ${tiers.length - 1}`);
+  }
+  if (typeof nonce !== "string" || nonce.length === 0) {
+    throw new Error("prompt nonce must be a non-empty string");
+  }
+  return tiers[tier];
 }

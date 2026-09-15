@@ -144,3 +144,58 @@ test("eval rejects prompt tiers outside 1 through 2", async (t) => {
   await assert.rejects(main(["eval", "--tier", "0"], { env }), /--tier/);
   await assert.rejects(main(["eval", "--tier", "3"], { env }), /--tier/);
 });
+
+test("run and doctor reject an unsupported provider", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "gudmo-cli-provider-test-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const env = { GUDMO_HOME: root, HOME: root };
+
+  await assert.rejects(main(["run", "--provider", "gemini"], { env }), /--provider must be one of/);
+  await assert.rejects(main(["doctor", "--provider", "gpt"], { env }), /--provider must be one of/);
+  await assert.rejects(main(["run", "--provider"], { env }), /--provider requires a value/);
+});
+
+test("eval measures the claude provider with its own single tier", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "gudmo-cli-claude-eval-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "fake-claude");
+  await fs.writeFile(executable, `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '2.1.270 (Claude Code)\\n'
+  exit 0
+fi
+cat <<'JSON'
+{"subtype":"success","is_error":false,"result":"DONE","usage":{"input_tokens":2,"cache_read_input_tokens":30000,"output_tokens":5}}
+JSON
+`, { mode: 0o700 });
+  await fs.writeFile(path.join(root, "config.json"), JSON.stringify({ claudePath: executable }));
+  const output = [];
+
+  const code = await main(["eval", "--runs", "1", "--provider", "claude", "--json"], {
+    env: { GUDMO_HOME: root, HOME: root },
+    out: (line) => output.push(line),
+  });
+  const report = JSON.parse(output.join("\n"));
+
+  assert.equal(code, 0);
+  assert.equal(report.metadata.provider, "claude");
+  assert.equal(report.metadata.codexVersion, "2.1.270 (Claude Code)");
+  assert.deepEqual(report.tiers.map(({ tier }) => tier), [1]);
+  assert.equal(report.tiers[0].outputWords, 1);
+  assert.equal(report.tiers[0].samples[0].usage.totalTokens, 7);
+});
+
+test("eval rejects a second claude tier that does not exist", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "gudmo-cli-claude-tier-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const env = { GUDMO_HOME: root, HOME: root };
+  await assert.rejects(main(["eval", "--provider", "claude", "--tier", "2"], { env }), /--tier must be an integer from 1 to 1/);
+});
+
+test("help documents provider selection", async () => {
+  const output = [];
+  await main(["help"], { out: (line) => output.push(line) });
+  const text = output.join("\n");
+  assert.match(text, /--provider/);
+  assert.match(text, /claude/);
+});

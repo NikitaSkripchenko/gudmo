@@ -1,13 +1,13 @@
 {
   "name": "gudmo",
   "version": "0.5.0",
-  "description": "Ensure the Codex five-hour usage window is active for every local account.",
+  "description": "Ensure the Codex and Claude Code five-hour usage windows are active for every local account.",
   "type": "module",
   "bin": {
     "gudmo": "./bin/gudmo.js"
   },
   "scripts": {
-    "check": "node --check bin/gudmo.js && node --check src/accounts.js && node --check src/cli.js && node --check src/codex.js && node --check src/config.js && node --check src/constants.js && node --check src/doctor.js && node --check src/eval.js && node --check src/paths.js && node --check src/prompt.js && node --check src/rate-limits.js && node --check src/scheduler.js && node --check src/storage.js",
+    "check": "node --check bin/gudmo.js && node --check src/accounts.js && node --check src/claude.js && node --check src/claude-usage.js && node --check src/cli.js && node --check src/codex.js && node --check src/config.js && node --check src/constants.js && node --check src/doctor.js && node --check src/eval.js && node --check src/paths.js && node --check src/prompt.js && node --check src/providers.js && node --check src/rate-limits.js && node --check src/scheduler.js && node --check src/storage.js",
     "test": "node --test"
   },
   "engines": {

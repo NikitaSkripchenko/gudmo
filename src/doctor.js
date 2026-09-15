@@ -4,7 +4,13 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export async function runDoctor(config, { platform = process.platform, accounts = null, runner = run } = {}) {
+export async function runDoctor(config, {
+  platform = process.platform,
+  accounts = null,
+  providers = ["codex"],
+  runner = run,
+} = {}) {
+  const selected = new Set(providers);
   const checks = [
     {
       name: "platform",
@@ -17,6 +23,31 @@ export async function runDoctor(config, { platform = process.platform, accounts 
       detail: `Node ${process.versions.node}`,
     },
   ];
+
+  if (selected.has("claude")) {
+    const claudeVersion = await runner(config.claudePath, ["--version"]);
+    checks.push({ name: "claude", ok: claudeVersion.ok, detail: claudeVersion.output || claudeVersion.error });
+
+    const usage = claudeVersion.ok
+      ? await runner(
+        config.claudePath,
+        ["--print", "--output-format", "json", "--no-session-persistence", "/usage"],
+        { timeoutMs: 30_000 },
+      )
+      : { ok: false, output: "", error: "Claude Code CLI is unavailable" };
+    const subscription = usage.ok && /using your subscription/i.test(usage.output);
+    checks.push({
+      name: "claude-authentication",
+      ok: subscription,
+      detail: usage.ok
+        ? (subscription
+          ? "Connected with a Claude subscription"
+          : "Claude Code is not reporting subscription usage; a Claude subscription login is required")
+        : usage.error,
+    });
+  }
+
+  if (!selected.has("codex")) return { ok: checks.every((check) => check.ok), checks };
 
   const version = await runner(config.codexPath, ["--version"]);
   checks.push({ name: "codex", ok: version.ok, detail: version.output || version.error });
@@ -56,11 +87,11 @@ export async function runDoctor(config, { platform = process.platform, accounts 
   return { ok: checks.every((check) => check.ok), checks };
 }
 
-async function run(command, args) {
+async function run(command, args, { timeoutMs = 10_000 } = {}) {
   try {
     const { stdout, stderr } = await execFileAsync(command, args, {
       encoding: "utf8",
-      timeout: 10_000,
+      timeout: timeoutMs,
       env: { ...process.env, NO_COLOR: "1" },
     });
     return { ok: true, output: `${stdout}${stderr}`.trim(), error: null };

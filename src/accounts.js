@@ -9,8 +9,18 @@ const MAX_REGISTRY_SCHEMA = 4;
 const MAX_REGISTRY_BYTES = 1 * 1_024 * 1_024;
 const MAX_AUTH_SNAPSHOT_BYTES = 1 * 1_024 * 1_024;
 const MAX_ACCOUNTS = 100;
+const MAX_CLAUDE_CONFIG_BYTES = 8 * 1_024 * 1_024;
 
-export async function discoverAccounts({ paths, env = process.env } = {}) {
+export async function discoverAccounts({ paths, env = process.env, providers = ["codex"] } = {}) {
+  const selected = new Set(providers);
+  const accounts = [];
+  if (selected.has("codex")) accounts.push(...await discoverCodexAccounts({ paths, env }));
+  if (selected.has("claude")) accounts.push(...await discoverClaudeAccounts({ paths, env }));
+  if (accounts.length === 0) throw new Error("No accounts were discovered for the selected providers");
+  return accounts;
+}
+
+export async function discoverCodexAccounts({ paths, env = process.env } = {}) {
   const sourceCodexHome = env.CODEX_HOME || path.join(env.HOME || os.homedir(), ".codex");
   const registryPath = path.join(sourceCodexHome, "accounts", "registry.json");
   const registryStat = await fs.stat(registryPath).catch((error) => {
@@ -25,12 +35,13 @@ export async function discoverAccounts({ paths, env = process.env } = {}) {
   if (registry === null) {
     return [{
       key: "active",
-      label: "active account",
+      provider: "codex",
+      label: "codex active account",
       email: null,
       isolated: false,
       sourceAuthPath: null,
       paths,
-      codexEnv: env,
+      providerEnv: env,
     }];
   }
 
@@ -51,7 +62,8 @@ export async function discoverAccounts({ paths, env = process.env } = {}) {
     const accountPaths = getAccountPaths(paths, record.account_key);
     return {
       key: record.account_key,
-      label: record.alias || record.email || record.account_key,
+      provider: "codex",
+      label: `codex ${record.alias || record.email || record.account_key}`,
       email: record.email || null,
       isolated: true,
       sourceAuthPath: path.join(
@@ -60,12 +72,47 @@ export async function discoverAccounts({ paths, env = process.env } = {}) {
         `${accountSnapshotKey(record.account_key)}.auth.json`,
       ),
       paths: accountPaths,
-      codexEnv: { ...env, CODEX_HOME: accountPaths.codexHome },
+      providerEnv: { ...env, CODEX_HOME: accountPaths.codexHome },
     };
   });
 
   if (accounts.length === 0) throw new Error(`No accounts found in ${registryPath}`);
   return accounts;
+}
+
+export async function discoverClaudeAccounts({ paths, env = process.env } = {}) {
+  const home = env.HOME || os.homedir();
+  const configCandidates = [
+    path.join(home, ".claude.json"),
+    path.join(env.CLAUDE_CONFIG_DIR || path.join(home, ".claude"), ".claude.json"),
+  ];
+
+  let email = null;
+  for (const candidate of configCandidates) {
+    const stat = await fs.stat(candidate).catch((error) => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!stat || stat.size > MAX_CLAUDE_CONFIG_BYTES) continue;
+    const config = await readJson(candidate, null).catch(() => null);
+    const address = config?.oauthAccount?.emailAddress;
+    if (typeof address === "string" && address) {
+      email = address;
+      break;
+    }
+  }
+
+  const accountPaths = getAccountPaths(paths, "claude:active");
+  return [{
+    key: "claude:active",
+    provider: "claude",
+    label: email ? `claude ${email}` : "claude active account",
+    email,
+    isolated: false,
+    sourceAuthPath: null,
+    paths: accountPaths,
+    providerEnv: env,
+  }];
 }
 
 export async function prepareAccount(account) {

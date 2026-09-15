@@ -20,11 +20,15 @@ function validateConfig(input) {
   const config = { ...DEFAULT_CONFIG, ...pickSupported(input) };
   validateSeconds("retrySeconds", config.retrySeconds, 5, 3_600);
   validateSeconds("timeoutSeconds", config.timeoutSeconds, 10, 600);
-  if (config.model !== null && (typeof config.model !== "string" || !config.model.trim())) {
-    throw new Error("config.model must be null or a non-empty string");
+  for (const key of ["model", "claudeModel"]) {
+    if (config[key] !== null && (typeof config[key] !== "string" || !config[key].trim())) {
+      throw new Error(`config.${key} must be null or a non-empty string`);
+    }
   }
-  if (typeof config.codexPath !== "string" || !config.codexPath.trim()) {
-    throw new Error("config.codexPath must be a non-empty string");
+  for (const key of ["codexPath", "claudePath"]) {
+    if (typeof config[key] !== "string" || !config[key].trim()) {
+      throw new Error(`config.${key} must be a non-empty string`);
+    }
   }
   if (!ALLOWED_REASONING.has(config.reasoningEffort)) {
     throw new Error(`config.reasoningEffort must be one of: ${[...ALLOWED_REASONING].join(", ")}`);

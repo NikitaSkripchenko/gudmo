@@ -80,6 +80,8 @@ export function buildFiveHourVerification({
   };
 }
 
+export { findFiveHourWindow };
+
 export function hasActiveFiveHourWindow({ fetchedAt, windows = [] } = {}) {
   const window = findFiveHourWindow(windows);
   const fetchedMs = Date.parse(fetchedAt);
@@ -95,6 +97,9 @@ export async function renewFiveHourWindow({
   verifier = readAccountRateLimits,
   runnerOptions,
   verifierOptions,
+  tiers = PROMPT_TIERS,
+  buildPrompt = buildRenewalPrompt,
+  verify = buildFiveHourVerification,
   clock = Date.now,
   nonceFactory = crypto.randomUUID,
   verificationDelayMs = 60_000,
@@ -110,7 +115,7 @@ export async function renewFiveHourWindow({
   let lockWaitedMs = 0;
   let lastResult = null;
 
-  for (let tier = 0; tier < PROMPT_TIERS.length; tier += 1) {
+  for (let tier = 0; tier < tiers.length; tier += 1) {
     let release = await acquireLock(paths.lock);
     while (!release) {
       if (lockWaitedMs >= maxLockWaitMs) {
@@ -142,7 +147,7 @@ export async function renewFiveHourWindow({
     try {
       const config = await loadConfig(paths.config);
       const attempt = tier + 1;
-      const prompt = buildRenewalPrompt({ tier, nonce: nonceFactory() });
+      const prompt = buildPrompt({ tier, nonce: nonceFactory(), tiers });
       onProgress?.({ phase: "checking", attempt, tier });
       const before = await readSnapshot(verifier, config, verifierOptions, clock);
       if (tier === 0 && hasActiveFiveHourWindow(before)) {
@@ -161,7 +166,7 @@ export async function renewFiveHourWindow({
       onProgress?.({
         phase: "sending",
         attempt,
-        maxAttempts: PROMPT_TIERS.length,
+        maxAttempts: tiers.length,
         tier,
         outputWords: prompt.outputWords,
       });
@@ -183,7 +188,7 @@ export async function renewFiveHourWindow({
         onProgress?.({ phase: "verifying", attempt, tier, delayMs: verificationDelayMs });
         await verificationWaiter(verificationDelayMs);
         let after = await readSnapshot(verifier, config, verifierOptions, clock);
-        let verification = buildFiveHourVerification({
+        let verification = verify({
           beforeWindows: before.windows,
           afterWindows: after.windows,
           beforeCheckedAt: before.fetchedAt,
@@ -215,7 +220,7 @@ export async function renewFiveHourWindow({
           await verificationWaiter(delayMs);
           propagationWaitedMs += delayMs;
           after = await readSnapshot(verifier, config, verifierOptions, clock);
-          verification = buildFiveHourVerification({
+          verification = verify({
             beforeWindows: before.windows,
             afterWindows: after.windows,
             beforeCheckedAt: before.fetchedAt,
@@ -228,7 +233,7 @@ export async function renewFiveHourWindow({
           onProgress?.({ phase: "metadata-retry", attempt, tier, delayMs: config.retrySeconds * 1_000 });
           await retryWaiter(config.retrySeconds * 1_000);
           after = await readSnapshot(verifier, config, verifierOptions, clock);
-          verification = buildFiveHourVerification({
+          verification = verify({
             beforeWindows: before.windows,
             afterWindows: after.windows,
             beforeCheckedAt: before.fetchedAt,
@@ -258,9 +263,9 @@ export async function renewFiveHourWindow({
       await release();
     }
 
-    if (tier < PROMPT_TIERS.length - 1) {
+    if (tier < tiers.length - 1) {
       const config = await loadConfig(paths.config);
-      onProgress?.({ phase: "retrying", nextAttempt: tier + 2, maxAttempts: PROMPT_TIERS.length, delayMs: config.retrySeconds * 1_000 });
+      onProgress?.({ phase: "retrying", nextAttempt: tier + 2, maxAttempts: tiers.length, delayMs: config.retrySeconds * 1_000 });
       await retryWaiter(config.retrySeconds * 1_000);
     }
   }

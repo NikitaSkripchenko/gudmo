@@ -1,15 +1,15 @@
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { VERSION } from "./constants.js";
-import { runCodex } from "./codex.js";
-import { buildRenewalPrompt, PROMPT_TIERS } from "./prompt.js";
+import { PROVIDERS } from "./providers.js";
 
 export async function runTokenEval({
   config,
   runs,
   tiers = [0],
+  provider = PROVIDERS.codex,
   nonceFactory = crypto.randomUUID,
-  runner = runCodex,
+  runner = provider.runner,
   runnerOptions,
   codexVersion = "unknown",
   clock = Date.now,
@@ -18,9 +18,9 @@ export async function runTokenEval({
     throw new Error("runs must be an integer from 1 to 100");
   }
   if (!Array.isArray(tiers) || tiers.length === 0 || tiers.some((tier) => (
-    !Number.isInteger(tier) || tier < 0 || tier >= PROMPT_TIERS.length
+    !Number.isInteger(tier) || tier < 0 || tier >= provider.tiers.length
   ))) {
-    throw new Error(`tier indexes must be integers from 0 to ${PROMPT_TIERS.length - 1}`);
+    throw new Error(`tier indexes must be integers from 0 to ${provider.tiers.length - 1}`);
   }
 
   const tierReports = [];
@@ -28,7 +28,7 @@ export async function runTokenEval({
     const samples = [];
     let promptCharacters = 0;
     for (let run = 0; run < runs; run += 1) {
-      const prompt = buildRenewalPrompt({ tier, nonce: nonceFactory({ tier, run }) });
+      const prompt = provider.buildPrompt({ tier, nonce: nonceFactory({ tier, run }), tiers: provider.tiers });
       promptCharacters = Math.max(promptCharacters, prompt.message.length);
       samples.push(await runner({
         ...config,
@@ -36,15 +36,16 @@ export async function runTokenEval({
         reasoningEffort: prompt.reasoningEffort,
       }, runnerOptions));
     }
-    tierReports.push(buildTierReport({ tier, samples, promptCharacters }));
+    tierReports.push(buildTierReport({ tier, samples, promptCharacters, provider }));
   }
 
   return {
     metric: "prompt-tier-tokens",
     result: tierReports.every((tier) => tier.result === "PASS") ? "PASS" : "FAIL",
     metadata: {
-      model: config.model || "default",
-      reasoningEffort: config.reasoningEffort,
+      provider: provider.id,
+      model: (provider.id === "claude" ? config.claudeModel : config.model) || "default",
+      reasoningEffort: provider.id === "claude" ? "n/a" : config.reasoningEffort,
       codexVersion,
       gudmoVersion: VERSION,
       evaluatedAt: new Date(clock()).toISOString(),
@@ -56,13 +57,14 @@ export async function runTokenEval({
 export function formatTokenEval(report) {
   const lines = [
     "Gudmo Production Prompt Eval",
-    `Codex:                   ${report.metadata.codexVersion}`,
+    `Provider:                ${report.metadata.provider ?? "codex"}`,
+    `CLI:                     ${report.metadata.codexVersion}`,
     `Model/reasoning:         ${report.metadata.model} / ${report.metadata.reasoningEffort}`,
   ];
   for (const tier of report.tiers) {
     lines.push(
       "",
-      `Tier ${tier.tier}: ${tier.outputWords} output words / ${tier.reasoningEffort} reasoning`,
+      `Tier ${tier.tier}: ${formatWorkload(tier)}`,
       `Runs:                     ${tier.runs}`,
       `Measurable runs:          ${tier.measurableRuns}/${tier.runs}`,
       `Valid replies:            ${tier.validReplies}/${tier.runs}`,
@@ -74,9 +76,10 @@ export function formatTokenEval(report) {
   return lines.join("\n");
 }
 
-export async function readCodexVersion(config, { env = process.env } = {}) {
+export async function readCodexVersion(config, { env = process.env, provider = PROVIDERS.codex } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(config.codexPath, ["--version"], { env, stdio: ["ignore", "pipe", "ignore"] });
+    const executable = config[provider.executableKey];
+    const child = spawn(executable, ["--version"], { env, stdio: ["ignore", "pipe", "ignore"] });
     let output = "";
     child.stdout.on("data", (chunk) => {
       output = `${output}${chunk.toString("utf8")}`.slice(-500);
@@ -86,8 +89,8 @@ export async function readCodexVersion(config, { env = process.env } = {}) {
   });
 }
 
-function buildTierReport({ tier, samples, promptCharacters }) {
-  const definition = PROMPT_TIERS[tier];
+function buildTierReport({ tier, samples, promptCharacters, provider = PROVIDERS.codex }) {
+  const definition = provider.tiers[tier];
   const measurable = samples.filter((sample) => sample.ok && Number.isFinite(sample.usage?.totalTokens));
   const totals = measurable.map((sample) => sample.usage.totalTokens);
   const validReplies = samples.filter((sample) => sample.ok
@@ -117,6 +120,11 @@ function buildTierReport({ tier, samples, promptCharacters }) {
       error: sample.error || null,
     })),
   };
+}
+
+function formatWorkload(tier) {
+  const words = `${tier.outputWords} output ${tier.outputWords === 1 ? "word" : "words"}`;
+  return tier.reasoningEffort ? `${words} / ${tier.reasoningEffort} reasoning` : words;
 }
 
 export function percentile(values, rank) {
