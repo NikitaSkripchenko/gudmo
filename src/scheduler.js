@@ -53,21 +53,19 @@ export function buildFiveHourVerification({
   const afterResetsAt = afterWindow?.resetsAt ?? null;
   const beforeMs = Date.parse(beforeResetsAt);
   const afterMs = Date.parse(afterResetsAt);
-  const observationMs = Date.parse(checkedAt) - Date.parse(beforeCheckedAt);
+  const checkedMs = Date.parse(checkedAt);
+  const observationMs = checkedMs - Date.parse(beforeCheckedAt);
   const observationSeconds = Number.isFinite(observationMs) && observationMs > 0
     ? Math.round(observationMs / 1_000)
     : null;
   const comparable = Number.isFinite(beforeMs)
     && Number.isFinite(afterMs)
+    && Number.isFinite(checkedMs)
+    && afterMs > checkedMs
     && Number.isFinite(observationSeconds);
   const changeSeconds = comparable ? Math.round((afterMs - beforeMs) / 1_000) : null;
-  const usageIncreased = comparable
-    && Number.isFinite(beforeWindow?.usedPercent)
-    && Number.isFinite(afterWindow?.usedPercent)
-    && afterWindow.usedPercent > beforeWindow.usedPercent;
   const toleranceSeconds = comparable ? Math.max(5, Math.round(observationSeconds * 0.2)) : null;
   const stillFloating = comparable
-    && !usageIncreased
     && Math.abs(changeSeconds - observationSeconds) <= toleranceSeconds;
 
   return {
@@ -198,10 +196,12 @@ export async function renewFiveHourWindow({
 
         let propagationWaitedMs = 0;
         let propagationPoll = 0;
+        let postRequestSnapshots = 1;
         const maxPropagationPolls = verificationPollIntervalMs > 0
           ? Math.ceil(verificationMaxWaitMs / verificationPollIntervalMs)
           : 0;
-        while (verification.status === "still-floating"
+        while ((verification.status === "still-floating"
+          || (verification.status === "renewed" && postRequestSnapshots < 2))
           && propagationWaitedMs < verificationMaxWaitMs) {
           const delayMs = Math.min(
             verificationPollIntervalMs,
@@ -217,28 +217,39 @@ export async function renewFiveHourWindow({
             poll: propagationPoll,
             maxPolls: maxPropagationPolls,
           });
+          const previous = after;
           await verificationWaiter(delayMs);
           propagationWaitedMs += delayMs;
           after = await readSnapshot(verifier, config, verifierOptions, clock);
+          postRequestSnapshots += 1;
           verification = verify({
-            beforeWindows: before.windows,
+            beforeWindows: previous.windows,
             afterWindows: after.windows,
-            beforeCheckedAt: before.fetchedAt,
+            beforeCheckedAt: previous.fetchedAt,
             checkedAt: after.fetchedAt,
-            error: before.error || after.error,
+            error: previous.error || after.error,
           });
+        }
+
+        if (verification.status === "renewed" && postRequestSnapshots < 2) {
+          verification = {
+            ...verification,
+            status: "unavailable",
+            error: "5h window renewal needs a second stable snapshot",
+          };
         }
 
         if (verification.status === "unavailable") {
           onProgress?.({ phase: "metadata-retry", attempt, tier, delayMs: config.retrySeconds * 1_000 });
+          const previous = after;
           await retryWaiter(config.retrySeconds * 1_000);
           after = await readSnapshot(verifier, config, verifierOptions, clock);
           verification = verify({
-            beforeWindows: before.windows,
+            beforeWindows: previous.windows,
             afterWindows: after.windows,
-            beforeCheckedAt: before.fetchedAt,
+            beforeCheckedAt: previous.fetchedAt,
             checkedAt: after.fetchedAt,
-            error: before.error || after.error,
+            error: previous.error || after.error,
           });
         }
 

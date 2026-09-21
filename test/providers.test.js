@@ -6,7 +6,6 @@ import test from "node:test";
 import { ensureConfig } from "../src/config.js";
 import { getPaths } from "../src/paths.js";
 import {
-  buildClaudeVerification,
   getProvider,
   parseProviderSelection,
   PROVIDER_IDS,
@@ -39,51 +38,44 @@ test("provider selection accepts each id plus all, and rejects anything else", (
   assert.throws(() => parseProviderSelection("gpt"), /--provider must be one of/);
 });
 
-test("claude renewal needs one minimal tier, not the Codex essay", () => {
-  const prompt = PROVIDERS.claude.buildPrompt({
-    tier: 0,
-    nonce: "nonce-a",
-    tiers: PROVIDERS.claude.tiers,
-  });
+test("Codex and Claude share one renewal contract", () => {
+  assert.equal(PROVIDERS.codex.tiers, PROVIDERS.claude.tiers);
+  assert.equal(PROVIDERS.codex.buildPrompt, PROVIDERS.claude.buildPrompt);
+  assert.equal(PROVIDERS.codex.verify, PROVIDERS.claude.verify);
 
-  assert.equal(PROVIDERS.claude.tiers.length, 1);
-  assert.match(prompt.message, /Renewal nonce: nonce-a\./);
-  assert.match(prompt.message, /exactly one word: DONE/);
-  assert.equal(prompt.message.includes("256 words"), false);
-  assert.throws(
-    () => PROVIDERS.claude.buildPrompt({ tier: 1, nonce: "n", tiers: PROVIDERS.claude.tiers }),
-    /tier/,
-  );
+  const input = { tier: 0, nonce: "nonce-a", tiers: PROVIDERS.codex.tiers };
+  assert.deepEqual(PROVIDERS.codex.buildPrompt(input), PROVIDERS.claude.buildPrompt(input));
 });
 
-test("a five-hour window present after the prompt is claude renewal evidence", () => {
-  const result = buildClaudeVerification({
+test("a newly appearing window needs another stable snapshot", () => {
+  const result = PROVIDERS.claude.verify({
     beforeWindows: [],
     afterWindows: [windowAt("2026-08-27T05:00:00.000Z")],
     beforeCheckedAt: "2026-08-27T00:00:00.000Z",
     checkedAt: "2026-08-27T00:01:00.000Z",
   });
 
-  assert.equal(result.status, "renewed");
+  assert.equal(result.status, "unavailable");
   assert.equal(result.beforeResetsAt, null);
   assert.equal(result.afterResetsAt, "2026-08-27T05:00:00.000Z");
   assert.equal(result.observationSeconds, 60);
 });
 
-test("claude verification never calls a missing or expired window a success", () => {
-  assert.equal(buildClaudeVerification({
+test("shared verification never calls a missing or expired window a success", () => {
+  assert.equal(PROVIDERS.claude.verify({
     afterWindows: [],
     beforeCheckedAt: "2026-08-27T00:00:00.000Z",
     checkedAt: "2026-08-27T00:01:00.000Z",
   }).status, "unavailable");
 
-  assert.equal(buildClaudeVerification({
+  assert.equal(PROVIDERS.claude.verify({
+    beforeWindows: [windowAt("2026-08-26T23:00:00.000Z")],
     afterWindows: [windowAt("2026-08-26T23:00:00.000Z")],
     beforeCheckedAt: "2026-08-27T00:00:00.000Z",
     checkedAt: "2026-08-27T00:01:00.000Z",
   }).status, "unavailable");
 
-  assert.equal(buildClaudeVerification({
+  assert.equal(PROVIDERS.claude.verify({
     afterWindows: [{ durationMinutes: 10_080, resetsAt: "2026-09-03T00:00:00.000Z" }],
     beforeCheckedAt: "2026-08-27T00:00:00.000Z",
     checkedAt: "2026-08-27T00:01:00.000Z",
@@ -121,7 +113,7 @@ test("claude renewal sends one prompt and verifies the window it anchored", asyn
     verificationDelayMs: MINUTE,
     verificationMaxWaitMs: 0,
     verificationWaiter: async (delay) => { now += delay; },
-    retryWaiter: async () => {},
+    retryWaiter: async (delay) => { now += delay; },
     ...claudeWiring(),
     runner: async (config) => { messages.push(config.message); return successfulClaudeResult(); },
     verifier: async () => ({
@@ -135,7 +127,10 @@ test("claude renewal sends one prompt and verifies the window it anchored", asyn
   assert.equal(result.attempts, 1);
   assert.equal(result.tier, 0);
   assert.equal(messages.length, 1);
-  assert.match(messages[0], /nonce-claude/);
+  assert.equal(
+    messages[0],
+    "Renewal nonce: nonce-claude. Do not use any tools and do not explain anything. Reply with exactly one word: DONE.",
+  );
 });
 
 test("claude renewal stays unverified when no window ever appears", async (t) => {

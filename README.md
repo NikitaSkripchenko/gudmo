@@ -32,23 +32,21 @@ Every invocation checks every discovered account across the selected providers. 
 
 For each account, Gudmo:
 
-1. Reads the current 300-minute Codex window.
+1. Reads the current 300-minute window from the selected provider.
 2. Stops successfully without a model call when the reset is less than five hours away.
-3. Otherwise sends a nonce-bearing 256-word prompt with high reasoning, the first profile observed to renew the problematic live account in the latest calibration.
+3. Otherwise sends the shared nonce-bearing prompt that forbids tools and explanations and requests exactly `DONE`; Codex uses minimal reasoning.
 4. Waits 60 seconds and reads the window again.
-5. If the first read still floats, polls metadata for up to two more minutes without sending another model prompt.
-6. Succeeds only when the reset stops sliding with wall time.
-7. If the full propagation grace period expires, retries once with 512 output words at high reasoning.
+5. Polls metadata for up to two more minutes without sending another model prompt.
+6. Succeeds only after two consecutive post-request snapshots show that the reset stopped sliding with wall time.
+7. Fails closed when the reset cannot be confirmed; it never escalates to a larger model request.
 
-Steps 3 through 7 describe the Codex pipeline. Claude Code anchors its five-hour window on the first request of the window, so its reset never floats: Gudmo sends one minimal nonce-bearing prompt and accepts the renewal once `/usage` reports a five-hour window whose reset is still ahead. A missing window is never counted as success.
+Accounts run concurrently and print account-prefixed progress. The process exits with code 0 when every account is either already active or verifies renewal. Missing metadata, malformed telemetry, an unconfirmed reset, or any account failure produces a nonzero exit.
 
-Accounts run concurrently and print account-prefixed progress. The process exits with code 0 when every account is either already active or verifies renewal. Missing metadata, malformed telemetry, exhausted prompt tiers, or any account failure produces a nonzero exit.
-
-The first prompt uses the 256-word/high-reasoning workload that renewed the problematic account during live calibration. The preceding 128-word/medium request consumed 14,942 tokens but left that account floating. This is an observed working profile, not a claim that it is the theoretical service minimum. A fresh nonce prevents the request from being fully reusable as a cached prompt, and delayed metadata is polled before the single fallback is allowed.
+Codex and Claude share the same prompt, tier, renewal pipeline, and verification function. Only their CLI runners and metadata readers differ. Gudmo spends additional time on metadata-only polling instead of additional model work. A change in usage percentage alone is not accepted as proof: the reset timestamp itself must remain stable across consecutive observations.
 
 ## Internal prompt evaluation
 
-`eval` makes live Codex calls and consumes usage. It measures the exact prompt builder used by `run`.
+`eval` makes live provider calls and consumes usage. It measures the exact shared prompt builder used by `run`.
 
 ```sh
 gudmo eval --runs 3
@@ -112,30 +110,24 @@ Set `GUDMO_HOME` to place configuration and state together in another directory.
 
 ## Verification semantics
 
-### Codex
+### Shared verification
 
 Gudmo compares the five-hour reset timestamp before and after a real prompt:
 
-- `renewed`: the reset is fixed, usage increased, or reset movement differs from wall-clock drift.
-- `still-floating`: the reset advanced by approximately the observation interval; Gudmo escalates the prompt.
+- `renewed`: two consecutive post-request observations show that the reset is no longer sliding with wall-clock time.
+- `still-floating`: the reset advanced by approximately the observation interval; Gudmo continues metadata-only polling.
 - `unavailable`: comparable 300-minute metadata is missing; Gudmo performs one metadata-only retry, then fails without claiming success.
-- `failed`: the Codex call failed or both tiers left the timer floating after propagation polling.
+- `failed`: the single minimal provider call failed or the timer remained unconfirmed after propagation polling.
 
-### Claude Code
+### Provider metadata
 
-Claude reports a five-hour window only while one is running, and its reset is anchored to the window start. Gudmo therefore treats the window's presence after the prompt as the renewal evidence:
-
-- `renewed`: `/usage` reports a five-hour window whose reset is still in the future.
-- `unavailable`: no five-hour window is reported, or the reset cannot be parsed; Gudmo retries the read once, then fails without claiming success.
-- `failed`: the `claude` call failed or returned no measurable token usage.
-
-Gudmo reads Claude usage with `claude --print --output-format json --no-session-persistence /usage`, which makes no model call and consumes no usage. The report is human-formatted text, so its reset phrase is parsed against the timezone it names and fails closed when it does not match.
+Codex reads rate-limit metadata from its app server. Claude reads `/usage` with `claude --print --output-format json --no-session-persistence`, which makes no model call and consumes no usage. Claude's report is human-formatted text, so its reset phrase is parsed against the timezone it names and fails closed when it does not match.
 
 This is observable evidence from experimental metadata, not a service-level guarantee from OpenAI or Anthropic.
 
 ## Development
 
-Tests use fake Codex executables and do not contact a model:
+Tests use fake Codex and Claude executables and do not contact a model:
 
 ```sh
 npm test
