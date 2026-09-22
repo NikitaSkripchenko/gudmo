@@ -121,7 +121,7 @@ test("a later invocation skips the still-active window", async (t) => {
   assert.equal(sends, 1);
 });
 
-test("a persistent floating timer never escalates beyond the minimal prompt", async (t) => {
+test("a persistent floating timer escalates to the next prompt", async (t) => {
   const paths = await setup(t);
   let now = START;
   const configs = [];
@@ -132,19 +132,17 @@ test("a persistent floating timer never escalates beyond the minimal prompt", as
     verificationDelayMs: MINUTE,
     verificationMaxWaitMs: 0,
     verificationWaiter: async (delay) => { now += delay; },
-    retryWaiter: async () => {},
+    retryWaiter: async (delay) => { now += delay; },
     runner: async (config) => { configs.push(config); return successfulCodexResult(); },
-    verifier: floatingReader(() => now),
+    verifier: floatingThenAnchoredReader(() => now, 1),
   });
-  assert.equal(result.status, "failed");
-  assert.equal(result.attempts, 1);
-  assert.equal(result.tier, 0);
-  assert.equal(configs.length, 1);
-  assert.equal(configs[0].reasoningEffort, "minimal");
-  assert.equal(
-    configs[0].message,
-    "Renewal nonce: nonce-0. Do not use any tools and do not explain anything. Reply with exactly one word: DONE.",
-  );
+  assert.equal(result.status, "renewed");
+  assert.equal(result.attempts, 2);
+  assert.equal(result.tier, 1);
+  assert.equal(configs[0].reasoningEffort, "low");
+  assert.match(configs[0].message, /exactly 256 words/);
+  assert.equal(configs[1].reasoningEffort, "low");
+  assert.match(configs[1].message, /exactly 512 words/);
 });
 
 test("delayed renewal is accepted without sending a second prompt", async (t) => {
@@ -201,7 +199,7 @@ test("renewal requires a second stable post-request snapshot", async (t) => {
   assert.equal(reads, 3);
 });
 
-test("a floating result exhausts the single minimal prompt tier", async (t) => {
+test("two floating results exhaust all prompt tiers", async (t) => {
   const paths = await setup(t);
   let now = START;
   let sends = 0;
@@ -216,9 +214,9 @@ test("a floating result exhausts the single minimal prompt tier", async (t) => {
     verifier: floatingReader(() => now),
   });
   assert.equal(result.status, "failed");
-  assert.equal(result.attempts, 1);
-  assert.equal(result.tier, 0);
-  assert.equal(sends, 1);
+  assert.equal(result.attempts, 2);
+  assert.equal(result.tier, 1);
+  assert.equal(sends, 2);
 });
 
 test("unavailable metadata gets one verification-only retry", async (t) => {
@@ -241,7 +239,7 @@ test("unavailable metadata gets one verification-only retry", async (t) => {
   assert.equal(reads, 3);
 });
 
-test("a failed Codex request does not trigger an expensive fallback", async (t) => {
+test("a failed Codex request retries and can recover", async (t) => {
   const paths = await setup(t);
   let now = START;
   let sends = 0;
@@ -252,12 +250,15 @@ test("a failed Codex request does not trigger an expensive fallback", async (t) 
     verificationDelayMs: MINUTE,
     verificationWaiter: async (delay) => { now += delay; },
     retryWaiter: async () => {},
-    runner: async () => { sends += 1; return { ok: false, error: "offline" }; },
+    runner: async () => {
+      sends += 1;
+      return sends === 1 ? { ok: false, error: "offline" } : successfulCodexResult();
+    },
     verifier: anchoredReader(() => now),
   });
-  assert.equal(result.status, "failed");
-  assert.equal(result.attempts, 1);
-  assert.equal(sends, 1);
+  assert.equal(result.status, "renewed");
+  assert.equal(result.attempts, 2);
+  assert.equal(sends, 2);
 });
 
 test("version-one scheduler state migrates to manual renewal state", async (t) => {

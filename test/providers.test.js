@@ -38,16 +38,20 @@ test("provider selection accepts each id plus all, and rejects anything else", (
   assert.throws(() => parseProviderSelection("gpt"), /--provider must be one of/);
 });
 
-test("Codex and Claude share one renewal contract", () => {
-  assert.equal(PROVIDERS.codex.tiers, PROVIDERS.claude.tiers);
-  assert.equal(PROVIDERS.codex.buildPrompt, PROVIDERS.claude.buildPrompt);
-  assert.equal(PROVIDERS.codex.verify, PROVIDERS.claude.verify);
+test("Codex and Claude Code each carry their own calibrated prompt strategy", () => {
+  assert.notEqual(PROVIDERS.codex.tiers, PROVIDERS.claude.tiers);
+  assert.notEqual(PROVIDERS.codex.buildPrompt, PROVIDERS.claude.buildPrompt);
+  assert.notEqual(PROVIDERS.codex.verify, PROVIDERS.claude.verify);
 
-  const input = { tier: 0, nonce: "nonce-a", tiers: PROVIDERS.codex.tiers };
-  assert.deepEqual(PROVIDERS.codex.buildPrompt(input), PROVIDERS.claude.buildPrompt(input));
+  assert.equal(PROVIDERS.codex.tiers.length, 2);
+  assert.equal(PROVIDERS.codex.tiers[0].outputWords, 256);
+  assert.equal(PROVIDERS.codex.tiers[1].outputWords, 512);
+
+  assert.equal(PROVIDERS.claude.tiers.length, 1);
+  assert.equal(PROVIDERS.claude.tiers[0].outputWords, 1);
 });
 
-test("a newly appearing window needs another stable snapshot", () => {
+test("a newly appearing window is renewal evidence for claude", () => {
   const result = PROVIDERS.claude.verify({
     beforeWindows: [],
     afterWindows: [windowAt("2026-08-27T05:00:00.000Z")],
@@ -55,13 +59,13 @@ test("a newly appearing window needs another stable snapshot", () => {
     checkedAt: "2026-08-27T00:01:00.000Z",
   });
 
-  assert.equal(result.status, "unavailable");
+  assert.equal(result.status, "renewed");
   assert.equal(result.beforeResetsAt, null);
   assert.equal(result.afterResetsAt, "2026-08-27T05:00:00.000Z");
   assert.equal(result.observationSeconds, 60);
 });
 
-test("shared verification never calls a missing or expired window a success", () => {
+test("claude verification never calls a missing or expired window a success", () => {
   assert.equal(PROVIDERS.claude.verify({
     afterWindows: [],
     beforeCheckedAt: "2026-08-27T00:00:00.000Z",

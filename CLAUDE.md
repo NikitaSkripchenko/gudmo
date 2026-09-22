@@ -108,8 +108,8 @@ Defined in `src/prompt.js`. Codex:
 
 | Tier | Target output | Reasoning |
 | --- | --- | --- |
-| 1 | 256 words | high |
-| 2 | 512 words | high |
+| 1 | 256 words | low |
+| 2 | 512 words | low |
 
 Claude Code needs exactly one minimal tier (1 output word, no reasoning control): the
 window anchors on the first request of the window regardless of workload, so there is no
@@ -118,11 +118,16 @@ floating reset to out-work. A measured live renewal costs 7 billed tokens.
 Every prompt carries a fresh nonce so the request cannot be served fully from cache, and
 states a bounded task with an explicit response contract (final word `DONE`).
 
-These values come from live calibration, not theory: exact `OK`/low, 64 words/medium, and
-128 words/medium all left the problematic account floating (the 128-word attempt burned
-14,942 tokens); 256 words/high renewed it with 2,146 output tokens. Delayed propagation
-was also real — one account became active only after gudmo had already declared failure,
-which is why propagation polling precedes the single fallback tier.
+Live calibration originally found `high` reasoning necessary: exact `OK`/low, 64
+words/medium, and 128 words/medium all left the problematic account floating (the
+128-word attempt burned 14,942 tokens); 256 words/high renewed it with 2,146 output
+tokens. Delayed propagation was also real — one account became active only after gudmo
+had already declared failure, which is why propagation polling precedes the fallback
+tier. Both tiers were later switched to `low` reasoning by deliberate choice, overriding
+that finding to cut cost — this combination has **not** been through the same
+live-account calibration as the `high`-reasoning table above. Watch `gudmo run` output
+(or run `gudmo eval --tier 1` / `--tier 2`) for accounts that stay floating; if that
+recurs, reasoning effort is the first thing to raise back to `high`.
 
 Tier sizes and the escalation curve are implementation constants, **not user
 configuration**. Any change must be reflected in `test/prompt.test.js`,
