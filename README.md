@@ -129,6 +129,11 @@ Claude reports a five-hour window only while one is running, and its reset is an
 - `unavailable`: no five-hour window is reported, or the reset cannot be parsed; Gudmo retries the read once, then fails without claiming success.
 - `failed`: the `claude` call failed or returned no measurable token usage.
 
+If renewal reports `Not logged in`, run `claude auth login` and retry
+`gudmo run --provider claude`. The account email comes from local configuration
+and can remain available after the login expires. Gudmo reports Claude's structured
+JSON failure message when stderr is empty, including authentication and API errors.
+
 Gudmo reads Claude usage with `claude --print --output-format json --no-session-persistence /usage`, which makes no model call and consumes no usage. The report is human-formatted text, so its reset phrase is parsed against the timezone it names and fails closed when it does not match.
 
 This is observable evidence from experimental metadata, not a service-level guarantee from OpenAI or Anthropic.

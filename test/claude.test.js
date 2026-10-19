@@ -95,6 +95,40 @@ test("runClaude reports a non-zero exit as a failed attempt", async (t) => {
   assert.match(result.error, /credit balance/);
 });
 
+test("runClaude reports structured failures from stdout when stderr is empty", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "gudmo-claude-json-fail-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "fake-claude");
+  const cases = [
+    { payload: { subtype: "success", is_error: true, result: "Not logged in · Please run /login" }, expected: "Not logged in · Please run /login" },
+    { payload: { subtype: "error_during_execution", errors: ["API unavailable", "Retry later"] }, expected: "API unavailable Retry later" },
+    { payload: { subtype: "error_max_turns" }, expected: "error_max_turns" },
+    { payload: { is_error: true, result: "x".repeat(600) }, expected: "x".repeat(500) },
+  ];
+
+  for (const { payload, expected } of cases) {
+    await fs.writeFile(executable, `#!/bin/sh\ncat <<'JSON'\n${JSON.stringify(payload)}\nJSON\nexit 1\n`, { mode: 0o700 });
+    const result = await runClaude({ ...DEFAULT_CONFIG, message: "prompt", claudePath: executable });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 1);
+    assert.equal(result.error, expected);
+    assert.equal(result.usage, undefined);
+  }
+});
+
+test("runClaude keeps exit-code fallback for unusable stdout", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "gudmo-claude-fallback-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const executable = path.join(root, "fake-claude");
+
+  for (const output of ["", "not json", "null", JSON.stringify(SUCCESS), '{"is_error":true,"result":{}}']) {
+    await fs.writeFile(executable, `#!/bin/sh\ncat <<'JSON'\n${output}\nJSON\nexit 1\n`, { mode: 0o700 });
+    const result = await runClaude({ ...DEFAULT_CONFIG, message: "prompt", claudePath: executable });
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "Claude exited with code 1");
+  }
+});
+
 test("readClaudeRateLimits turns a live usage report into comparable windows", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "gudmo-claude-usage-"));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
