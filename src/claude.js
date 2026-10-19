@@ -73,7 +73,7 @@ export async function runClaude(config, options = {}) {
         signal,
         error: code === 0
           ? telemetryError
-          : (timedOut ? `Claude timed out after ${config.timeoutSeconds} seconds` : summarizeFailure(stderr, code, signal)),
+          : (timedOut ? `Claude timed out after ${config.timeoutSeconds} seconds` : summarizeFailure(stderr, code, signal, stdout)),
         stdout,
         stderr,
         startedAt,
@@ -128,9 +128,27 @@ function appendTail(current, chunk, limit) {
   return `${current}${chunk.toString("utf8")}`.slice(-limit);
 }
 
-function summarizeFailure(stderr, code, signal) {
+function summarizeFailure(stderr, code, signal, stdout) {
   const detail = stderr.trim().split("\n").slice(-3).join(" ").slice(0, 500);
   if (detail) return detail;
   if (signal) return `Claude was terminated by signal ${signal}`;
+  // In JSON mode Claude can report API/auth failures only on stdout, even
+  // with subtype "success". Do not expose the rest of the telemetry document.
+  let payload;
+  try {
+    payload = JSON.parse(stdout);
+  } catch {
+    // Empty, malformed, or truncated output has no reliable structured detail.
+    return `Claude exited with code ${code}`;
+  }
+  const failedSubtype = typeof payload?.subtype === "string" && payload.subtype.startsWith("error_");
+  if (payload?.is_error || failedSubtype) {
+    const errors = Array.isArray(payload.errors)
+      ? payload.errors.filter((error) => typeof error === "string").join(" ").trim()
+      : "";
+    const result = typeof payload.result === "string" ? payload.result.trim() : "";
+    const message = result || errors || (failedSubtype ? payload.subtype : "");
+    if (message) return message.split("\n").slice(-3).join(" ").slice(0, 500);
+  }
   return `Claude exited with code ${code}`;
 }
